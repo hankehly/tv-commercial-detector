@@ -25,7 +25,7 @@ services:
     environment:
       - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=postgres
-      - POSTGRES_DB=tv-commercial-recognition
+      - POSTGRES_DB=tv-commercial-detector
     ports:
       - "5432:5432"
     volumes:
@@ -34,7 +34,7 @@ services:
       test:
         [
           "CMD-SHELL",
-          "pg_isready -U postgres -d tv-commercial-recognition || exit 1"
+          "pg_isready -U postgres -d tv-commercial-detector || exit 1"
         ]
       interval: 10s
       timeout: 5s

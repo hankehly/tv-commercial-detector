@@ -11,7 +11,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from tv_commercial_recognition.tasks import export_segment
+from tv_commercial_detector.tasks import export_segment
 
 
 class AudioSegmenter(BaseModel):

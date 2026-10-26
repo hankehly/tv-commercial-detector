@@ -1,4 +1,4 @@
-# tv-commercial-recognition
+# tv-commercial-detector
 A POC system for recording, recognizing, and storing TV commercials with real-time detection capabilities.
 
 ---
@@ -198,7 +198,7 @@ Don't do this in `~/.zshrc`, just on a case by case basis.
 https://stackoverflow.com/questions/50168647/multiprocessing-causes-python-to-crash-and-gives-an-error-may-have-been-in-progr
 
 ```shell
-OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES celery -A tv_commercial_recognition.tasks worker --loglevel=info
+OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES celery -A tv_commercial_detector.tasks worker --loglevel=info
 ```
 
 #### Capturing a stream of data

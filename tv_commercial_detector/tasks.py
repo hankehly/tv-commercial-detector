@@ -10,7 +10,7 @@ from pydub import AudioSegment
 from pydub.silence import detect_leading_silence
 import sys
 
-# OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES celery -A tv_commercial_recognition.tasks worker --loglevel=INFO
+# OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES celery -A tv_commercial_detector.tasks worker --loglevel=INFO
 app = Celery("tasks", broker="pyamqp://guest@localhost//")
 app.conf.update(
     task_serializer="json",
@@ -30,7 +30,7 @@ logger.addHandler(handler)
 logger.setLevel(logging.INFO)
 
 
-# celery -A tv_commercial_recognition.tasks worker -l INFO
+# celery -A tv_commercial_detector.tasks worker -l INFO
 @app.task(bind=True)
 def export_segment(
     self,
@@ -121,7 +121,7 @@ def fingerprint_audio(file_path):
                 "host": "localhost",
                 "user": "postgres",
                 "password": "postgres",
-                "database": "tv-commercial-recognition",
+                "database": "tv-commercial-detector",
             },
         }
     )
