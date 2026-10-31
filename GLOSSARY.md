@@ -36,8 +36,12 @@ _Avoid_: tie-up
 
 ### Detection
 
+**Detector**:
+Anything that watches a recording or broadcast and reports when commercial breaks happen. Comes in two kinds: candidates and hindsight references.
+_Avoid_: entrant, model
+
 **State**:
-What the detector reports is on air at a given moment: `COMMERCIAL_BREAK`, `PROGRAM`, or `UNKNOWN` when it can't tell yet.
+What a detector reports is on air at a given moment: `COMMERCIAL_BREAK`, `PROGRAM`, or `UNKNOWN` when it can't tell yet.
 _Avoid_: status, mode
 
 ### Benchmark
@@ -54,7 +58,7 @@ _Avoid_: annotation, tag
 A detector being scored as a possible live detector. It never looks ahead.
 
 **Hindsight reference**:
-An existing tool that judges each moment using the whole recording. Scored only for comparison and never used live.
+A detector, usually an existing tool, that judges each moment using the whole recording. Scored only for comparison and never used live.
 _Avoid_: baseline
 
 **Entry delay**:
