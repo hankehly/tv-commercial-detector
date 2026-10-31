@@ -1,0 +1,3 @@
+# No look-ahead, even on recordings
+
+The detector decides each moment using only the broadcast up to that moment, even when it reads a recording whose remainder is already available. The goal is real-time detection of live broadcasts, not labeling recordings after the fact, so every run on a recording must behave exactly as the live detector will. Existing tools that look ahead, such as Comskip and pycommflag, are therefore scored only as hindsight references, never as candidates for live use. Skipping commercials in recordings is not a goal: recordings are used only for testing, and the detector reads them as if they were live broadcasts.
