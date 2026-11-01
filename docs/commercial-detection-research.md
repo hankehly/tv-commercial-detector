@@ -168,7 +168,7 @@ Lock down the SRT endpoint with authentication, encryption and network ACLs.
 
 **Caveats:**
 
-- **XIT-STK100 video capture.** Pixela's [Mac Q&A](https://jvcdl.pixela.co.jp/products/xit/stk100/qa_mac.html) and [spec page](https://jvcdl.pixela.co.jp/products/xit/stk100/spec.html) say screen capture isn't supported because of copy protection, and recordings can't be converted or played elsewhere. Working audio capture through BlackHole doesn't mean video capture will work. This affects the audiovisual plan locally too, not just in the cloud.
+- **XIT-STK100 video capture.** Pixela's [Mac Q&A](https://jvcdl.pixela.co.jp/products/xit/stk100/qa_mac.html) and [spec page](https://jvcdl.pixela.co.jp/products/xit/stk100/spec.html) say screen capture isn't supported because of copy protection, and recordings can't be converted or played elsewhere. Working audio capture through BlackHole doesn't mean video capture will work. This affects the audiovisual plan locally too, not just in the cloud. **Update 2026-11-01:** the stick is actually an XIT-STK110, not an STK100 (see its [Mac Q&A](https://jvcdl.pixela.co.jp/products/xit/stk110/qa_mac.html)). Tested on it with the Xit Mobile app, recording the Xit Mobile window with OBS gets both picture and sound; see [Making a recording](making-recordings.md).
 - **TVer** has no ingestion API, doesn't carry every channel, may show different ads with different timing than broadcast, and its [terms prohibit capture and download](https://help.tver.jp/hc/ja/articles/5106719268761). Not a viable feed.
 - **Licensed feeds** would work technically. Google Cloud's [Live Stream API](https://docs.cloud.google.com/livestream/docs/overview) accepts SRT and RTMP, but it only ingests and transcodes; it doesn't supply channels. Broadcast rights are complex; see [A-PAB's cloud recording rules](https://www.apab.or.jp/business/cloud-rec/).
 - **Latency and sync.** What matters is the delay between an ad starting and the volume changing. The analyzed feed must match the channel and timing of the TV being controlled; a feed running 10 s behind defeats even a perfect classifier.
@@ -195,7 +195,7 @@ Suggested repo description:
 
 ## 8. Open questions
 
-- **Can we get a decoded video feed at all?** See the XIT-STK100 caveat above. If not, start with audio-only (experiment D), or find a different tuner or capture path for video.
+- **Can we get a decoded video feed at all?** See the XIT-STK100 caveat above. If not, start with audio-only (experiment D), or find a different tuner or capture path for video. **Answered 2026-11-01: yes**, see [Making a recording](making-recordings.md).
 - Do Japanese channels actually hide their on-screen logo during ads? This needs checking per channel before relying on it as a feature.
 - How much labeled data do we need, and what's the cheapest way to annotate it?
 - What detection latency is acceptable for volume control? This decides whether look-ahead smoothing is affordable.
