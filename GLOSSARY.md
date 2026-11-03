@@ -37,7 +37,7 @@ _Avoid_: tie-up
 ### Detection
 
 **Detector**:
-Anything that watches a recording or broadcast and reports when commercial breaks happen. Comes in two kinds: candidates and hindsight references.
+Anything that watches a recording or broadcast and reports when commercial breaks happen. Comes in two kinds: candidates and look-ahead detectors.
 _Avoid_: entrant, model
 
 **State**:
@@ -57,9 +57,9 @@ _Avoid_: annotation, tag
 **Candidate**:
 A detector being scored as a possible live detector. It never looks ahead.
 
-**Hindsight reference**:
-A detector, usually an existing tool, that judges each moment using the whole recording. Scored only for comparison and never used live.
-_Avoid_: baseline
+**Look-ahead detector**:
+A detector, usually an existing tool, that judges each moment using the whole recording, including what comes after that moment. Scored only for comparison and never used live.
+_Avoid_: hindsight reference, baseline
 
 **Entry delay**:
 The time from a commercial break's labeled start until the detector reports `COMMERCIAL_BREAK`, including all processing and network time.
