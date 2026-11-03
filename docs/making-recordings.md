@@ -53,7 +53,7 @@ These are all the recording settings in our OBS profile on 2026-11-01. Open them
 |---|---|---|---|
 | Output | Output Mode | Advanced | Shows the recording settings below |
 | Output → Recording | Type | Standard | |
-| Output → Recording | Recording Path | the `recordings/` folder at the root of this repository | git ignores it; recordings are large and copyrighted |
+| Output → Recording | Recording Path | the `data/recordings/` folder at the root of this repository | git ignores `data/`; recordings are large and copyrighted |
 | Output → Recording | Generate File Name without Space | On | Files are named like `2026-11-01_07-07-22.mp4` |
 | Output → Recording | Recording Format | Hybrid MP4 (.mp4) | Plays like a normal MP4 but stays readable if OBS crashes |
 | Output → Recording | Audio Track | 1 only | One stereo track |
@@ -111,7 +111,7 @@ Either set everything by hand from the tables above (the tables are the source o
 1. On this Mac, use **Profile → Export Profile** and **Scene Collection → Export Scene Collection**.
 2. The exported profile also holds the streaming settings, including the stream key (`service.json`). Delete that file from the export, and never commit the export to git.
 3. On the new Mac, do the Xit Mobile setup and the screen recording permission above, then **Profile → Import Profile** and **Scene Collection → Import Scene Collection**, and choose both in the Profile and Scene Collection menus.
-4. Then fix what is tied to this Mac: set **Recording Path** to the new repository's `recordings/` folder, and pick the Xit Mobile window again in the source. If the new display isn't Retina, use Crop Top 28 instead of 56.
+4. Then fix what is tied to this Mac: set **Recording Path** to the new repository's `data/recordings/` folder, and pick the Xit Mobile window again in the source. If the new display isn't Retina, use Crop Top 28 instead of 56.
 
 ## Every time
 
@@ -122,7 +122,7 @@ Either set everything by hand from the tables above (the tables are the source o
 | 3 | Click **Start Recording** | The recording timer at the bottom of OBS counts up |
 | 4 | Carry on with other work. Leave Xit Mobile on the same desktop, covered by other windows if you like, and mute the Mac if you want quiet. Don't lock the screen or turn the display off | |
 | 5 | Glance at Xit Mobile now and then, and always after switching desktops | If its picture is frozen, click the picture |
-| 6 | Click **Stop Recording** | A new `.mp4` appears in `recordings/` |
+| 6 | Click **Stop Recording** | A new `.mp4` appears in `data/recordings/` |
 | 7 | Check the recording ("Check a recording" below) | Both commands print nothing |
 
 ### Recording another channel
@@ -143,11 +143,11 @@ Xit Mobile keeps the same window when it changes channel, so there's no need to 
 Run both from the repository root, replacing `FILE` with the recording's file name:
 
 ```bash
-ffmpeg -hide_banner -nostats -i recordings/FILE.mp4 -vf "freezedetect=n=-50dB:d=10,blackdetect=d=5" -af "silencedetect=n=-60dB:d=5" -f null - 2>&1 | grep -E "freeze_start|black_start|silence_start"
+ffmpeg -hide_banner -nostats -i data/recordings/FILE.mp4 -vf "freezedetect=n=-50dB:d=10,blackdetect=d=5" -af "silencedetect=n=-60dB:d=5" -f null - 2>&1 | grep -E "freeze_start|black_start|silence_start"
 ```
 
 ```bash
-ffprobe -v error -select_streams a:0 -show_entries packet=pts_time -of csv=p=0 recordings/FILE.mp4 | awk -F, 'NR > 1 && $1 - prev > 0.032 { print "audio gap at", prev, "s:", $1 - prev, "s" } { prev = $1 }'
+ffprobe -v error -select_streams a:0 -show_entries packet=pts_time -of csv=p=0 data/recordings/FILE.mp4 | awk -F, 'NR > 1 && $1 - prev > 0.032 { print "audio gap at", prev, "s:", $1 - prev, "s" } { prev = $1 }'
 ```
 
 No output from either command means the recording passed. Each line the first command prints names the problem and when it started, in seconds from the start of the recording:
@@ -173,7 +173,7 @@ No output from either command means the recording passed. Each line the first co
 
 ## Things to know
 
-- **Copy protection.** Pixela's [XIT-STK110 Mac Q&A](https://jvcdl.pixela.co.jp/products/xit/stk110/qa_mac.html) says the TV picture can't be recorded as video, for copyright protection, and that Xit Mobile stops showing the picture when it detects a screen capture app. Its message begins 「画面キャプチャアプリケーションの起動を検出したため」. Xit Mobile didn't react to OBS in our testing, so this setup works because that check doesn't notice OBS, not because Pixela allows it. If Xit Mobile ever shows that message or blacks out its picture, stop there and don't try to hide OBS from it. Recordings are copyrighted broadcasts: keep them in the git-ignored `recordings/` folder and use them only for testing.
+- **Copy protection.** Pixela's [XIT-STK110 Mac Q&A](https://jvcdl.pixela.co.jp/products/xit/stk110/qa_mac.html) says the TV picture can't be recorded as video, for copyright protection, and that Xit Mobile stops showing the picture when it detects a screen capture app. Its message begins 「画面キャプチャアプリケーションの起動を検出したため」. Xit Mobile didn't react to OBS in our testing, so this setup works because that check doesn't notice OBS, not because Pixela allows it. If Xit Mobile ever shows that message or blacks out its picture, stop there and don't try to hide OBS from it. Recordings are copyrighted broadcasts: keep them in the git-ignored `data/recordings/` folder and use them only for testing.
 - **Why the picture freezes.** Xit Mobile draws the TV picture inside an embedded web page, and macOS probably pauses drawing it while the window is minimized, hidden or out of view. It usually starts again by itself once the window is visible; after a desktop switch it needed a click.
 - **Keeping the Mac awake.** While recording, OBS and Xit Mobile both tell macOS to keep the display on (visible in `pmset -g assertions`), so the Mac doesn't go to sleep by itself. Running `caffeinate -di` alongside is optional.
 - **Xit Mobile's own recorder is no substitute.** Pixela says its recordings play only inside Xit Mobile on the Mac that made them, so other tools can't read them.
