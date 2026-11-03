@@ -10,7 +10,6 @@ scratch/
 .claude/worktrees/
 
 # Media and captured data
-recordings/
 *.wav
 *.mp3
 *.mp4
