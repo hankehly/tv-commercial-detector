@@ -21,6 +21,10 @@ build-backend = "uv_build"
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "D", "T20", "TID251", "PD"]
 
+[tool.ruff.lint.per-file-ignores]
+# A test's name is its specification; a docstring would repeat it.
+"tests/**" = ["D103"]
+
 [tool.ruff.lint.pydocstyle]
 convention = "numpy"
 
