@@ -13,9 +13,13 @@ import math
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from tv_commercial_detector.labels import find_label_files, read_label_file
 from tv_commercial_detector.media_probe import MediaProbe, ProbeError, ProbeResult
 
 LIST_COLUMNS = ("file_name", "size_bytes", "fingerprint", "length_seconds")
+
+LOGO_SUFFIX = ".lgd"
+"""The extension of logo files, which live in the data folder's ``logos/`` folder."""
 
 LENGTH_TOLERANCE_SECONDS = 1.0
 """How far a listed length may be from the probed length before it's an error."""
@@ -64,14 +68,21 @@ class ValidationReport:
 
     ``recording_count`` and ``total_length_seconds`` cover the listed recordings
     found in the data folder; ``skipped_count`` counts the recordings skipped for
-    not being listed.
+    not being listed, and ``unlabeled_count`` those skipped for having no usable
+    label file. ``channels`` and ``commercial_break_count`` cover the
+    label files without errors; ``channels_without_logo`` lists those channels
+    with no logo file.
     """
 
     errors: list[Problem] = field(default_factory=list)
     warnings: list[Problem] = field(default_factory=list)
     recording_count: int = 0
     skipped_count: int = 0
+    unlabeled_count: int = 0
     total_length_seconds: float = 0.0
+    channels: list[str] = field(default_factory=list)
+    commercial_break_count: int = 0
+    channels_without_logo: list[str] = field(default_factory=list)
 
     @property
     def hours(self) -> float:
@@ -84,9 +95,9 @@ class _ListError(Exception):
 
 
 def validate(
-    data_folder: Path, recording_list: Path, probe: MediaProbe
+    data_folder: Path, recording_list: Path, labels_folder: Path, probe: MediaProbe
 ) -> ValidationReport:
-    """Check the recordings in ``data_folder`` against ``recording_list``.
+    """Check the recordings in ``data_folder`` and their labels.
 
     Parameters
     ----------
@@ -94,6 +105,8 @@ def validate(
         The data folder; its ``recordings/`` folder holds the recordings.
     recording_list : Path
         The CSV list of recordings.
+    labels_folder : Path
+        The folder holding the label files.
     probe : MediaProbe
         Reports each recording's tracks and length.
 
@@ -133,7 +146,103 @@ def validate(
             _warn_unlisted(path, entries, probe, report)
         else:
             _check_listed(path, entry, probe, report)
+
+    _check_labels(labels_folder, list(entries.values()), found, report)
+    report.channels_without_logo = [
+        channel
+        for channel in report.channels
+        if not logo_file(data_folder, channel).is_file()
+    ]
     return report
+
+
+def logo_file(data_folder: Path, channel: str) -> Path:
+    """Return where a channel's logo file belongs for join_logo_scp.
+
+    Parameters
+    ----------
+    data_folder : Path
+        The data folder.
+    channel : str
+        The channel, as written in the label files.
+
+    Returns
+    -------
+    Path
+        ``logos/<channel>.lgd`` inside the data folder.
+    """
+    return data_folder / "logos" / f"{channel}{LOGO_SUFFIX}"
+
+
+def _check_labels(
+    labels_folder: Path,
+    listed: list[ListEntry],
+    found: set[str],
+    report: ValidationReport,
+) -> None:
+    """Check every label file against the list and summarise the usable ones.
+
+    Only label files without errors count towards the channels and commercial
+    breaks in the summary. A listed recording in the recordings folder without a
+    label file is skipped with a warning.
+
+    Parameters
+    ----------
+    labels_folder : Path
+        The folder holding the label files.
+    listed : list[ListEntry]
+        Every listed recording.
+    found : set[str]
+        The file names of the recordings in the recordings folder.
+    report : ValidationReport
+        Receives any errors and warnings, the channels and the commercial break
+        count.
+    """
+    by_fingerprint = {entry.fingerprint: entry for entry in listed}
+    channels: set[str] = set()
+    labeled: dict[str, str] = {}
+    for path in find_label_files(labels_folder):
+        errors_before = len(report.errors)
+        label_file, problems = read_label_file(path)
+        report.errors.extend(Problem(path.name, message) for message in problems)
+        if label_file is None:
+            continue
+        first = labeled.setdefault(label_file.recording, path.name)
+        if first != path.name:
+            report.errors.append(
+                Problem(
+                    path.name,
+                    f"same recording as {first}; a recording has one label file",
+                )
+            )
+        elif label_file.recording not in by_fingerprint:
+            report.errors.append(
+                Problem(
+                    path.name,
+                    f"recording {label_file.recording} is not in the list of "
+                    "recordings",
+                )
+            )
+        else:
+            length = by_fingerprint[label_file.recording].length_seconds
+            report.errors.extend(
+                Problem(path.name, message)
+                for message in label_file.problems_against(length)
+            )
+        if len(report.errors) == errors_before:
+            channels.add(label_file.channel)
+            report.commercial_break_count += len(label_file.commercial_breaks)
+    report.channels = sorted(channels)
+
+    for entry in listed:
+        if entry.file_name in found and entry.fingerprint not in labeled:
+            report.unlabeled_count += 1
+            report.warnings.append(
+                Problem(
+                    entry.file_name,
+                    f"no usable label file, so skipped; looked in {labels_folder}",
+                )
+            )
 
 
 def _unique_entries(
