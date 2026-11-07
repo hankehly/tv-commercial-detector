@@ -84,7 +84,7 @@ def write_labels(
     name: str,
     content: bytes = b"video",
     channel: str = "TBS",
-    breaks: str = "[]",
+    commercial_breaks: str = "[]",
 ) -> Path:
     """Write a label file for a placeholder recording.
 
@@ -98,7 +98,7 @@ def write_labels(
         The placeholder recording's bytes, which set the fingerprint written.
     channel : str
         The channel to write.
-    breaks : str
+    commercial_breaks : str
         The TOML value written for ``commercial_breaks``.
 
     Returns
@@ -110,7 +110,7 @@ def write_labels(
     path.write_text(
         f'recording = "{fingerprint(content)}"\n'
         f'channel = "{channel}"\n'
-        f"commercial_breaks = {breaks}\n"
+        f"commercial_breaks = {commercial_breaks}\n"
     )
     return path
 
@@ -496,7 +496,7 @@ def test_label_files_are_summarised_by_channel_and_commercial_break(
         "a.toml",
         b"first",
         channel="TV Asahi",
-        breaks="""[
+        commercial_breaks="""[
   { start = "00:30:00", end = "00:32:00" },
   { start = "00:12:03.2", end = "00:15:03" },
 ]""",
@@ -600,7 +600,7 @@ def test_time_that_cannot_be_read_is_an_error(
     write_labels(
         labels_folder,
         "a.toml",
-        breaks=f"""[
+        commercial_breaks=f"""[
   {{ start = "00:01:00", end = "00:02:00" }},
   {{ start = {written}, end = "00:15:00" }},
 ]""",
@@ -630,7 +630,9 @@ def test_commercial_break_that_does_not_end_after_its_start_is_an_error(
     add_recording(data_folder, "a.mp4")
     recording_list.write_text(HEADER + list_row("a.mp4"))
     write_labels(
-        labels_folder, "a.toml", breaks=f'[{{ start = "00:15:00", end = "{end}" }}]'
+        labels_folder,
+        "a.toml",
+        commercial_breaks=f'[{{ start = "00:15:00", end = "{end}" }}]',
     )
 
     report = validate(
@@ -653,7 +655,7 @@ def test_overlapping_commercial_breaks_are_an_error(
     write_labels(
         labels_folder,
         "a.toml",
-        breaks="""[
+        commercial_breaks="""[
   { start = "00:30:00", end = "00:31:00" },
   { start = "00:10:00", end = "00:20:00" },
   { start = "00:12:00", end = "00:13:00" },
@@ -688,7 +690,7 @@ def test_commercial_breaks_that_touch_are_an_error(
     write_labels(
         labels_folder,
         "a.toml",
-        breaks="""[
+        commercial_breaks="""[
   { start = "00:10:00", end = "00:12:00" },
   { start = "00:12:00", end = "00:13:00" },
 ]""",
@@ -715,7 +717,7 @@ def test_time_past_the_end_of_the_recording_is_an_error(
     write_labels(
         labels_folder,
         "a.toml",
-        breaks="""[
+        commercial_breaks="""[
   { start = "00:50:00", end = "01:00:00.1" },
   { start = "01:00:00.2", end = "01:00:00.3" },
 ]""",
@@ -845,3 +847,74 @@ def test_channels_without_a_logo_file_are_listed(
     assert report.errors == []
     assert report.channels == ["NTV", "TV Asahi"]
     assert report.channels_without_logo == ["NTV"]
+
+
+def test_label_file_with_a_bad_time_is_still_checked_against_the_others(
+    data_folder: Path, recording_list: Path, labels_folder: Path
+) -> None:
+    add_recording(data_folder, "a.mp4")
+    recording_list.write_text(HEADER + list_row("a.mp4"))
+    write_labels(
+        labels_folder,
+        "a copy.toml",
+        commercial_breaks='[{ start = "00:15:00", end = "00:14:00" }]',
+    )
+    write_labels(labels_folder, "a.toml")
+    write_labels(
+        labels_folder,
+        "stray.toml",
+        b"never listed",
+        commercial_breaks='[{ start = "00:61:00", end = "01:02:00" }]',
+    )
+
+    report = validate(
+        data_folder, recording_list, labels_folder, FakeProbe({"a.mp4": BOTH_TRACKS})
+    )
+
+    assert [(e.subject, e.message) for e in report.errors] == [
+        (
+            "a copy.toml",
+            "commercial break 1 (00:15:00 to 00:14:00): doesn't end after it starts",
+        ),
+        ("a.toml", "same recording as a copy.toml; a recording has one label file"),
+        (
+            "stray.toml",
+            "commercial break 1 (00:61:00 to 01:02:00): can't read the start "
+            "00:61:00; write times in quotes as hh:mm:ss or hh:mm:ss.d",
+        ),
+        (
+            "stray.toml",
+            f"recording {fingerprint(b'never listed')} is not in the list of "
+            "recordings",
+        ),
+    ]
+
+
+def test_recording_whose_label_file_has_errors_is_skipped_with_a_warning(
+    data_folder: Path, recording_list: Path, labels_folder: Path
+) -> None:
+    add_recording(data_folder, "a.mp4")
+    recording_list.write_text(HEADER + list_row("a.mp4", length=60.0))
+    write_labels(
+        labels_folder,
+        "a.toml",
+        commercial_breaks='[{ start = "00:00:30", end = "00:01:30" }]',
+    )
+    probe = FakeProbe(
+        {"a.mp4": ProbeResult(has_video=True, has_audio=True, length_seconds=60.0)}
+    )
+
+    report = validate(data_folder, recording_list, labels_folder, probe)
+
+    assert [(e.subject, e.message) for e in report.errors] == [
+        (
+            "a.toml",
+            "commercial break 1 (00:00:30 to 00:01:30): runs past the end of the "
+            "recording at 00:01:00.000",
+        )
+    ]
+    assert [(w.subject, w.message) for w in report.warnings] == [
+        ("a.mp4", f"no usable label file, so skipped; looked in {labels_folder}")
+    ]
+    assert report.unlabeled_count == 1
+    assert report.commercial_break_count == 0

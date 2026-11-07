@@ -177,7 +177,7 @@ def logo_file(data_folder: Path, channel: str) -> Path:
 def _check_labels(
     labels_folder: Path,
     listed: list[ListEntry],
-    found: set[str],
+    found_file_names: set[str],
     report: ValidationReport,
 ) -> None:
     """Check every label file against the list and summarise the usable ones.
@@ -192,50 +192,45 @@ def _check_labels(
         The folder holding the label files.
     listed : list[ListEntry]
         Every listed recording.
-    found : set[str]
+    found_file_names : set[str]
         The file names of the recordings in the recordings folder.
     report : ValidationReport
         Receives any errors and warnings, the channels and the commercial break
         count.
     """
     by_fingerprint = {entry.fingerprint: entry for entry in listed}
+    first_file_by_fingerprint: dict[str, str] = {}
+    usable: set[str] = set()
     channels: set[str] = set()
-    labeled: dict[str, str] = {}
     for path in find_label_files(labels_folder):
-        errors_before = len(report.errors)
-        label_file, problems = read_label_file(path)
+        reading = read_label_file(path)
+        problems = list(reading.problems)
+        if reading.recording is not None:
+            first_file = first_file_by_fingerprint.setdefault(
+                reading.recording, path.name
+            )
+            entry = by_fingerprint.get(reading.recording)
+            if first_file != path.name:
+                problems.append(
+                    f"same recording as {first_file}; a recording has one label file"
+                )
+            elif entry is None:
+                problems.append(
+                    f"recording {reading.recording} is not in the list of recordings"
+                )
+            elif reading.label_file is not None:
+                problems.extend(
+                    reading.label_file.problems_against(entry.length_seconds)
+                )
         report.errors.extend(Problem(path.name, message) for message in problems)
-        if label_file is None:
-            continue
-        first = labeled.setdefault(label_file.recording, path.name)
-        if first != path.name:
-            report.errors.append(
-                Problem(
-                    path.name,
-                    f"same recording as {first}; a recording has one label file",
-                )
-            )
-        elif label_file.recording not in by_fingerprint:
-            report.errors.append(
-                Problem(
-                    path.name,
-                    f"recording {label_file.recording} is not in the list of "
-                    "recordings",
-                )
-            )
-        else:
-            length = by_fingerprint[label_file.recording].length_seconds
-            report.errors.extend(
-                Problem(path.name, message)
-                for message in label_file.problems_against(length)
-            )
-        if len(report.errors) == errors_before:
-            channels.add(label_file.channel)
-            report.commercial_break_count += len(label_file.commercial_breaks)
+        if reading.label_file is not None and not problems:
+            usable.add(reading.label_file.recording)
+            channels.add(reading.label_file.channel)
+            report.commercial_break_count += len(reading.label_file.commercial_breaks)
     report.channels = sorted(channels)
 
     for entry in listed:
-        if entry.file_name in found and entry.fingerprint not in labeled:
+        if entry.file_name in found_file_names and entry.fingerprint not in usable:
             report.unlabeled_count += 1
             report.warnings.append(
                 Problem(

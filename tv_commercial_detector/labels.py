@@ -15,6 +15,7 @@ Times are written ``hh:mm:ss``, optionally with tenths, in any order.
 import re
 import tomllib
 from dataclasses import dataclass
+from operator import attrgetter
 from pathlib import Path
 
 _TIME = re.compile(r"(\d{1,2}):([0-5]\d):([0-5]\d)(\.\d)?")
@@ -46,7 +47,7 @@ class CommercialBreak:
     @property
     def name(self) -> str:
         """How messages refer to this commercial break."""
-        return f"commercial break {self.number} ({self.span})"
+        return _describe(self.number, self.start_text, self.end_text)
 
 
 @dataclass(frozen=True)
@@ -76,10 +77,28 @@ class LabelFile:
             A message for each commercial break running past the end.
         """
         return [
-            f"{b.name}: runs past the end of the recording at {_clock(length_seconds)}"
-            for b in sorted(self.commercial_breaks, key=lambda b: b.number)
-            if b.end_seconds > length_seconds
+            f"{commercial_break.name}: runs past the end of the recording at "
+            f"{_format_length(length_seconds)}"
+            for commercial_break in sorted(
+                self.commercial_breaks, key=attrgetter("number")
+            )
+            if commercial_break.end_seconds > length_seconds
         ]
+
+
+@dataclass(frozen=True)
+class LabelFileReading:
+    """What could be read from one label file.
+
+    ``recording`` is the fingerprint whenever it can be read, so the file can
+    still be checked against the list of recordings and the other label files
+    when something else in it is wrong. ``label_file`` is set only when nothing
+    in the file is wrong.
+    """
+
+    recording: str | None
+    label_file: LabelFile | None
+    problems: list[str]
 
 
 def find_label_files(labels_folder: Path) -> list[Path]:
@@ -104,7 +123,7 @@ def find_label_files(labels_folder: Path) -> list[Path]:
     )
 
 
-def read_label_file(path: Path) -> tuple[LabelFile | None, list[str]]:
+def read_label_file(path: Path) -> LabelFileReading:
     """Read a label file, collecting every problem found inside it.
 
     Parameters
@@ -114,18 +133,19 @@ def read_label_file(path: Path) -> tuple[LabelFile | None, list[str]]:
 
     Returns
     -------
-    tuple[LabelFile | None, list[str]]
-        The label file, or ``None`` if its fields can't be read, and a message
-        for each problem found in it.
+    LabelFileReading
+        The fingerprint if it can be read, the label file if nothing in it is
+        wrong, and a message for each problem found in it.
     """
     try:
         with path.open("rb") as f:
             fields = tomllib.load(f)
     except tomllib.TOMLDecodeError as e:
-        return None, [f"not valid TOML: {e}"]
+        return LabelFileReading(None, None, [f"not valid TOML: {e}"])
 
+    known = f"{', '.join(_FIELDS[:-1])} and {_FIELDS[-1]}"
     problems = [
-        f"unknown field {name}; the fields are recording, channel and commercial_breaks"
+        f"unknown field {name}; the fields are {known}"
         for name in fields
         if name not in _FIELDS
     ]
@@ -139,22 +159,22 @@ def read_label_file(path: Path) -> tuple[LabelFile | None, list[str]]:
         )
         entries = []
 
-    breaks = []
+    commercial_breaks = []
     for number, entry in enumerate(entries, start=1):
-        commercial_break = _read_break(number, entry, problems)
+        commercial_break = _read_commercial_break(number, entry, problems)
         if commercial_break is not None:
-            breaks.append(commercial_break)
-    breaks.sort(key=lambda b: b.start_seconds)
-    problems.extend(_overlaps(breaks))
+            commercial_breaks.append(commercial_break)
+    commercial_breaks.sort(key=attrgetter("start_seconds"))
+    problems.extend(_overlaps(commercial_breaks))
     if problems or recording is None or channel is None:
-        return None, problems
+        return LabelFileReading(recording, None, problems)
     label_file = LabelFile(
         path=path,
         recording=recording,
         channel=channel,
-        commercial_breaks=tuple(breaks),
+        commercial_breaks=tuple(commercial_breaks),
     )
-    return label_file, problems
+    return LabelFileReading(recording, label_file, problems)
 
 
 def _read_recording(value: object, problems: list[str]) -> str | None:
@@ -207,12 +227,12 @@ def _read_channel(value: object, problems: list[str]) -> str | None:
     return value
 
 
-def _overlaps(breaks: list[CommercialBreak]) -> list[str]:
+def _overlaps(commercial_breaks: list[CommercialBreak]) -> list[str]:
     """Find commercial breaks that overlap or touch.
 
     Parameters
     ----------
-    breaks : list[CommercialBreak]
+    commercial_breaks : list[CommercialBreak]
         The commercial breaks, sorted by start.
 
     Returns
@@ -223,7 +243,7 @@ def _overlaps(breaks: list[CommercialBreak]) -> list[str]:
     """
     problems = []
     latest: CommercialBreak | None = None
-    for commercial_break in breaks:
+    for commercial_break in commercial_breaks:
         if latest is not None and commercial_break.start_seconds <= latest.end_seconds:
             pair = (
                 f"commercial breaks {latest.number} ({latest.span}) and "
@@ -241,7 +261,7 @@ def _overlaps(breaks: list[CommercialBreak]) -> list[str]:
     return problems
 
 
-def _read_break(
+def _read_commercial_break(
     number: int, entry: object, problems: list[str]
 ) -> CommercialBreak | None:
     """Read one commercial break from a label file.
@@ -269,7 +289,7 @@ def _read_break(
         return None
     start, end = entry["start"], entry["end"]
     start_text, end_text = str(start), str(end)
-    name = f"commercial break {number} ({start_text} to {end_text})"
+    name = _describe(number, start_text, end_text)
     seconds = {}
     for field_name, value in (("start", start), ("end", end)):
         seconds[field_name] = _seconds(value)
@@ -307,7 +327,27 @@ def _seconds(value: object) -> float | None:
     return int(hours) * 3600 + int(minutes) * 60 + int(seconds) + float(tenths or 0)
 
 
-def _clock(seconds: float) -> str:
+def _describe(number: int, start_text: str, end_text: str) -> str:
+    """Name a commercial break for messages, by its number and times as written.
+
+    Parameters
+    ----------
+    number : int
+        Its position in the label file, counting from 1.
+    start_text : str
+        Its start as written.
+    end_text : str
+        Its end as written.
+
+    Returns
+    -------
+    str
+        For example ``commercial break 2 (00:12:03.2 to 00:15:03)``.
+    """
+    return f"commercial break {number} ({start_text} to {end_text})"
+
+
+def _format_length(seconds: float) -> str:
     """Write a length in seconds as ``hh:mm:ss.fff``.
 
     Parameters

@@ -6,7 +6,7 @@ from loguru import logger
 
 from tv_commercial_detector import settings
 from tv_commercial_detector.media_probe import Ffprobe
-from tv_commercial_detector.recording_set import LOGO_SUFFIX, validate
+from tv_commercial_detector.recording_set import logo_file, validate
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -68,6 +68,6 @@ def _validate() -> int:
         logger.warning(
             "No logo file for join_logo_scp on these channels: "
             f"{', '.join(report.channels_without_logo)}. "
-            f"Put each in {data_folder / 'logos'}, named <channel>{LOGO_SUFFIX}."
+            f"Save each as {logo_file(data_folder, '<channel>')}."
         )
     return 1 if report.errors else 0
