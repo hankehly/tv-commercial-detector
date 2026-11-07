@@ -12,13 +12,14 @@ for people's convenience. It belongs to its recording by fingerprint::
 Times are written ``hh:mm:ss``, optionally with tenths, in any order.
 """
 
+import math
 import re
 import tomllib
 from dataclasses import dataclass
 from operator import attrgetter
 from pathlib import Path
 
-_TIME = re.compile(r"(\d{1,2}):([0-5]\d):([0-5]\d)(\.\d)?")
+_TIME = re.compile(r"(\d{1,2}):([0-5]\d):([0-5]\d)(\.\d)?", re.ASCII)
 
 _TIME_HINT = "write times in quotes as hh:mm:ss or hh:mm:ss.d"
 
@@ -74,15 +75,18 @@ class LabelFile:
         Returns
         -------
         list[str]
-            A message for each commercial break running past the end.
+            A message for each commercial break running past the end. A
+            commercial break may end at the length rounded up to the next tenth
+            of a second, the last time a labeler can write.
         """
+        last_tenth = math.ceil(round(length_seconds * 10, 6))
         return [
             f"{commercial_break.name}: runs past the end of the recording at "
             f"{_format_length(length_seconds)}"
             for commercial_break in sorted(
                 self.commercial_breaks, key=attrgetter("number")
             )
-            if commercial_break.end_seconds > length_seconds
+            if round(commercial_break.end_seconds * 10) > last_tenth
         ]
 
 
@@ -140,6 +144,8 @@ def read_label_file(path: Path) -> LabelFileReading:
     try:
         with path.open("rb") as f:
             fields = tomllib.load(f)
+    except UnicodeDecodeError:
+        return LabelFileReading(None, None, ["not UTF-8 text; save it as UTF-8"])
     except tomllib.TOMLDecodeError as e:
         return LabelFileReading(None, None, [f"not valid TOML: {e}"])
 
@@ -209,7 +215,8 @@ def _read_channel(value: object, problems: list[str]) -> str | None:
     value : object
         The field as TOML gave it, or ``None`` if it is missing.
     problems : list[str]
-        Receives a message if it isn't a name in quotes, or can't name a file.
+        Receives a message if it isn't a name in quotes, starts or ends with a
+        space, or can't name a file.
 
     Returns
     -------
@@ -218,6 +225,9 @@ def _read_channel(value: object, problems: list[str]) -> str | None:
     """
     if not isinstance(value, str) or not value.strip():
         problems.append("channel must be the channel's name, in quotes")
+        return None
+    if value != value.strip():
+        problems.append("channel can't start or end with a space")
         return None
     if "/" in value or "\\" in value:
         problems.append(

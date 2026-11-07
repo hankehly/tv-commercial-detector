@@ -574,7 +574,10 @@ def test_two_label_files_for_one_recording_is_an_error(
     assert [(e.subject, e.message) for e in report.errors] == [
         ("a.toml", "same recording as a copy.toml; a recording has one label file")
     ]
-    assert report.warnings == []
+    assert [(w.subject, w.message) for w in report.warnings] == [
+        ("a.mp4", f"no usable label file, so skipped; looked in {labels_folder}")
+    ]
+    assert report.channels == []
 
 
 @pytest.mark.parametrize(
@@ -586,6 +589,7 @@ def test_two_label_files_for_one_recording_is_an_error(
         ('"00:12:03,2"', "00:12:03,2"),
         ("00:12:03", "00:12:03"),
         ("723", "723"),
+        ('"0０:1２:03"', "0０:1２:03"),
     ],
 )
 def test_time_that_cannot_be_read_is_an_error(
@@ -718,8 +722,8 @@ def test_time_past_the_end_of_the_recording_is_an_error(
         labels_folder,
         "a.toml",
         commercial_breaks="""[
-  { start = "00:50:00", end = "01:00:00.1" },
-  { start = "01:00:00.2", end = "01:00:00.3" },
+  { start = "00:50:00", end = "00:55:00" },
+  { start = "00:58:00", end = "01:00:00.4" },
 ]""",
     )
     probe = FakeProbe(
@@ -731,10 +735,30 @@ def test_time_past_the_end_of_the_recording_is_an_error(
     assert [(e.subject, e.message) for e in report.errors] == [
         (
             "a.toml",
-            "commercial break 2 (01:00:00.2 to 01:00:00.3): runs past the end of the "
+            "commercial break 2 (00:58:00 to 01:00:00.4): runs past the end of the "
             "recording at 01:00:00.250",
         )
     ]
+
+
+def test_commercial_break_can_end_at_the_last_tenth_of_the_recording(
+    data_folder: Path, recording_list: Path, labels_folder: Path
+) -> None:
+    add_recording(data_folder, "a.mp4")
+    recording_list.write_text(HEADER + list_row("a.mp4", length=3600.25))
+    write_labels(
+        labels_folder,
+        "a.toml",
+        commercial_breaks='[{ start = "00:58:00", end = "01:00:00.3" }]',
+    )
+    probe = FakeProbe(
+        {"a.mp4": ProbeResult(has_video=True, has_audio=True, length_seconds=3600.25)}
+    )
+
+    report = validate(data_folder, recording_list, labels_folder, probe)
+
+    assert report.errors == []
+    assert report.commercial_break_count == 1
 
 
 FINGERPRINT_LINE = f'recording = "{fingerprint(b"video")}"\n'
@@ -757,6 +781,13 @@ BREAKS_HINT = (
             FINGERPRINT_LINE + 'channel = ""\n',
             ["channel must be the channel's name, in quotes"],
         ),
+        *[
+            (
+                FINGERPRINT_LINE + f'channel = "{channel}"\n',
+                ["channel can't start or end with a space"],
+            )
+            for channel in [" TBS", "TBS ", "TBS\u3000"]
+        ],
         (
             FINGERPRINT_LINE + 'channel = "BS/TBS"\n',
             ["channel can't contain / or \\, since it names the channel's logo file"],
@@ -918,3 +949,58 @@ def test_recording_whose_label_file_has_errors_is_skipped_with_a_warning(
     ]
     assert report.unlabeled_count == 1
     assert report.commercial_break_count == 0
+
+
+def test_label_file_that_is_not_utf8_is_an_error(
+    data_folder: Path, recording_list: Path, labels_folder: Path
+) -> None:
+    add_recording(data_folder, "a.mp4")
+    recording_list.write_text(HEADER + list_row("a.mp4"))
+    (labels_folder / "a.toml").write_bytes(
+        f'recording = "{fingerprint(b"video")}"\nchannel = "テレビ朝日"\n'.encode(
+            "shift_jis"
+        )
+    )
+    write_labels(labels_folder, "b.toml", b"never listed")
+
+    report = validate(
+        data_folder, recording_list, labels_folder, FakeProbe({"a.mp4": BOTH_TRACKS})
+    )
+
+    assert [(e.subject, e.message) for e in report.errors] == [
+        ("a.toml", "not UTF-8 text; save it as UTF-8"),
+        (
+            "b.toml",
+            f"recording {fingerprint(b'never listed')} is not in the list of "
+            "recordings",
+        ),
+    ]
+
+
+def test_label_files_are_checked_when_the_data_folder_is_missing(
+    tmp_path: Path, recording_list: Path, labels_folder: Path
+) -> None:
+    missing = tmp_path / "unplugged drive"
+    recording_list.write_text(
+        HEADER + list_row("a.mp4", b"first") + list_row("b.mp4", b"second")
+    )
+    write_labels(labels_folder, "a.toml", b"first", channel="NTV")
+    write_labels(
+        labels_folder,
+        "b.toml",
+        b"second",
+        commercial_breaks='[{ start = "00:15:00", end = "00:14:00" }]',
+    )
+
+    report = validate(missing, recording_list, labels_folder, FakeProbe({}))
+
+    assert [(e.subject, e.message) for e in report.errors] == [
+        (str(missing), "data folder does not exist"),
+        (
+            "b.toml",
+            "commercial break 1 (00:15:00 to 00:14:00): doesn't end after it starts",
+        ),
+    ]
+    assert report.warnings == []
+    assert report.channels == ["NTV"]
+    assert report.channels_without_logo == ["NTV"]

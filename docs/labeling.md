@@ -28,7 +28,7 @@ A recording with no commercial breaks is written `commercial_breaks = []`.
 | `channel` | Yes | The channel's name, written the same way in every label file (for example `TBS`, `TV Asahi`, `NTV`, `Fuji TV`, `TV Tokyo`). It also names the channel's logo file |
 | `commercial_breaks` | No (empty when left out) | One `{ start = "…", end = "…" }` per commercial break, in any order |
 
-Times are written `hh:mm:ss`, optionally with tenths (`00:12:03.2`), in quotes, counted from the start of the recording as a video player shows them.
+Times are written `hh:mm:ss`, optionally with tenths (`00:12:03.2`), in quotes, counted from the start of the recording as a video player shows them. A commercial break still running when the recording ends ends at the recording's length, rounded up to the next tenth. Save the file as UTF-8, the default in most editors.
 
 ## What `validate` rejects
 
@@ -39,12 +39,12 @@ Each error names the label file and the commercial break (its number in the file
 | A time that can't be read | `"00:61:00"`, `"12:03"`, `"00:12:03.25"`, or a time without quotes |
 | An end that isn't after its start | `{ start = "00:15:00", end = "00:15:00" }` |
 | Commercial breaks that overlap, or touch (one ends exactly where the next starts) | Touching ones are one commercial break: join them |
-| A time past the end of the recording | Checked against the length in the list of recordings |
+| A time past the end of the recording | Checked against the length in the list of recordings, rounded up to the next tenth |
 | A fingerprint that isn't in the list of recordings | Usually a copying mistake |
 | Two label files with the same fingerprint | A recording has one label file |
 | A missing or misspelled field | `commercial_break = [...]` instead of `commercial_breaks` |
 
-A recording without a usable label file is skipped with a warning, so `validate` and `run` still work on a partly labeled set.
+A recording without a usable label file is skipped with a warning, so `validate` and `run` still work on a partly labeled set. Label files are checked even when the data folder is missing, for example while its drive is unplugged.
 
 ## Logo files
 
@@ -59,4 +59,4 @@ data/
     └── TV Asahi.lgd
 ```
 
-`validate` lists every labeled channel that has no logo file yet. A channel name can't contain `/` or `\`, since it is part of a file name.
+`validate` lists every labeled channel that has no logo file yet. A channel name can't contain `/` or `\`, or start or end with a space, since it is part of a file name.

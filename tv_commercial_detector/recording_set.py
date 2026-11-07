@@ -13,7 +13,7 @@ import math
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from tv_commercial_detector.labels import find_label_files, read_label_file
+from tv_commercial_detector.labels import LabelFile, find_label_files, read_label_file
 from tv_commercial_detector.media_probe import MediaProbe, ProbeError, ProbeResult
 
 LIST_COLUMNS = ("file_name", "size_bytes", "fingerprint", "length_seconds")
@@ -99,6 +99,10 @@ def validate(
 ) -> ValidationReport:
     """Check the recordings in ``data_folder`` and their labels.
 
+    The label files are checked against the list of recordings even when the
+    data folder is missing or holds no recordings, for example while the drive
+    holding it is unplugged.
+
     Parameters
     ----------
     data_folder : Path
@@ -116,15 +120,16 @@ def validate(
         Every error and warning found, with a summary of the recordings.
     """
     report = ValidationReport()
+    recordings: list[Path] = []
+    recordings_folder = data_folder / "recordings"
     if not data_folder.is_dir():
         report.errors.append(Problem(str(data_folder), "data folder does not exist"))
-        return report
-
-    recordings_folder = data_folder / "recordings"
-    recordings = _find_recordings(recordings_folder)
-    if not recordings:
-        report.errors.append(Problem(str(recordings_folder), "no MP4 recordings found"))
-        return report
+    else:
+        recordings = _find_recordings(recordings_folder)
+        if not recordings:
+            report.errors.append(
+                Problem(str(recordings_folder), "no MP4 recordings found")
+            )
 
     try:
         rows = _read_list(recording_list)
@@ -134,11 +139,12 @@ def validate(
     entries = _unique_entries(rows, report)
 
     found = {path.name for path in recordings}
-    for name in entries:
-        if name not in found:
-            report.errors.append(
-                Problem(name, "listed but missing from the recordings folder")
-            )
+    if recordings:
+        for name in entries:
+            if name not in found:
+                report.errors.append(
+                    Problem(name, "listed but missing from the recordings folder")
+                )
 
     for path in recordings:
         entry = entries.get(path.name)
@@ -183,7 +189,8 @@ def _check_labels(
     """Check every label file against the list and summarise the usable ones.
 
     Only label files without errors count towards the channels and commercial
-    breaks in the summary. A listed recording in the recordings folder without a
+    breaks in the summary, and neither of two label files for one recording
+    counts. A listed recording in the recordings folder without a
     label file is skipped with a warning.
 
     Parameters
@@ -200,8 +207,8 @@ def _check_labels(
     """
     by_fingerprint = {entry.fingerprint: entry for entry in listed}
     first_file_by_fingerprint: dict[str, str] = {}
-    usable: set[str] = set()
-    channels: set[str] = set()
+    claimed_twice: set[str] = set()
+    usable: dict[str, LabelFile] = {}
     for path in find_label_files(labels_folder):
         reading = read_label_file(path)
         problems = list(reading.problems)
@@ -211,6 +218,7 @@ def _check_labels(
             )
             entry = by_fingerprint.get(reading.recording)
             if first_file != path.name:
+                claimed_twice.add(reading.recording)
                 problems.append(
                     f"same recording as {first_file}; a recording has one label file"
                 )
@@ -224,10 +232,13 @@ def _check_labels(
                 )
         report.errors.extend(Problem(path.name, message) for message in problems)
         if reading.label_file is not None and not problems:
-            usable.add(reading.label_file.recording)
-            channels.add(reading.label_file.channel)
-            report.commercial_break_count += len(reading.label_file.commercial_breaks)
-    report.channels = sorted(channels)
+            usable[reading.label_file.recording] = reading.label_file
+    for fingerprint in claimed_twice:
+        usable.pop(fingerprint, None)
+    report.channels = sorted({label_file.channel for label_file in usable.values()})
+    report.commercial_break_count = sum(
+        len(label_file.commercial_breaks) for label_file in usable.values()
+    )
 
     for entry in listed:
         if entry.file_name in found_file_names and entry.fingerprint not in usable:
