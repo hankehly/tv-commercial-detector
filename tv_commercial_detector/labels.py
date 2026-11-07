@@ -21,6 +21,8 @@ from pathlib import Path
 
 _TIME = re.compile(r"(\d{1,2}):([0-5]\d):([0-5]\d)(\.\d)?", re.ASCII)
 
+_FINGERPRINT = re.compile(r"[0-9a-f]{64}")
+
 _TIME_HINT = "write times in quotes as hh:mm:ss or hh:mm:ss.d"
 
 _FIELDS = ("recording", "channel", "commercial_breaks")
@@ -144,6 +146,8 @@ def read_label_file(path: Path) -> LabelFileReading:
     try:
         with path.open("rb") as f:
             fields = tomllib.load(f)
+    except OSError as e:
+        return LabelFileReading(None, None, [f"can't be read: {e.strerror or e}"])
     except UnicodeDecodeError:
         return LabelFileReading(None, None, ["not UTF-8 text; save it as UTF-8"])
     except tomllib.TOMLDecodeError as e:
@@ -191,20 +195,27 @@ def _read_recording(value: object, problems: list[str]) -> str | None:
     value : object
         The field as TOML gave it, or ``None`` if it is missing.
     problems : list[str]
-        Receives a message if it isn't a fingerprint in quotes.
+        Receives a message if it isn't a fingerprint in quotes: 64 lower-case
+        hex digits, as the list of recordings writes it.
 
     Returns
     -------
     str | None
         The fingerprint, or ``None`` if it can't be read.
     """
-    if isinstance(value, str) and value:
-        return value
-    problems.append(
-        "recording must be the recording's fingerprint, in quotes, copied from "
-        "the list of recordings"
-    )
-    return None
+    if not isinstance(value, str) or not value:
+        problems.append(
+            "recording must be the recording's fingerprint, in quotes, copied from "
+            "the list of recordings"
+        )
+        return None
+    if not _FINGERPRINT.fullmatch(value):
+        problems.append(
+            f"recording {value!r} isn't a fingerprint: 64 lower-case hex digits, "
+            "copied from the list of recordings"
+        )
+        return None
+    return value
 
 
 def _read_channel(value: object, problems: list[str]) -> str | None:

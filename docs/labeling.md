@@ -40,7 +40,7 @@ Each error names the label file and the commercial break (its number in the file
 | An end that isn't after its start | `{ start = "00:15:00", end = "00:15:00" }` |
 | Commercial breaks that overlap, or touch (one ends exactly where the next starts) | Touching ones are one commercial break: join them |
 | A time past the end of the recording | Checked against the length in the list of recordings, rounded up to the next tenth |
-| A fingerprint that isn't in the list of recordings | Usually a copying mistake |
+| A fingerprint that isn't 64 lower-case hex digits, or isn't in the list of recordings | Usually a copying mistake |
 | Two label files with the same fingerprint | A recording has one label file |
 | A missing or misspelled field | `commercial_break = [...]` instead of `commercial_breaks` |
 

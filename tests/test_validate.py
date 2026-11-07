@@ -1004,3 +1004,58 @@ def test_label_files_are_checked_when_the_data_folder_is_missing(
     assert report.warnings == []
     assert report.channels == ["NTV"]
     assert report.channels_without_logo == ["NTV"]
+
+
+def test_label_file_that_cannot_be_opened_is_an_error(
+    data_folder: Path, recording_list: Path, labels_folder: Path
+) -> None:
+    add_recording(data_folder, "a.mp4")
+    recording_list.write_text(HEADER + list_row("a.mp4"))
+    locked = write_labels(labels_folder, "a.toml")
+    locked.chmod(0)
+    write_labels(labels_folder, "b.toml", b"never listed")
+
+    try:
+        report = validate(
+            data_folder,
+            recording_list,
+            labels_folder,
+            FakeProbe({"a.mp4": BOTH_TRACKS}),
+        )
+    finally:
+        locked.chmod(0o644)
+
+    assert [(e.subject, e.message[:15]) for e in report.errors] == [
+        ("a.toml", "can't be read: "),
+        ("b.toml", "recording e51ef"),
+    ]
+
+
+@pytest.mark.parametrize(
+    "written",
+    [
+        fingerprint(b"video").upper(),
+        fingerprint(b"video") + " ",
+        fingerprint(b"video")[:-1],
+    ],
+)
+def test_recording_that_is_not_a_fingerprint_is_an_error(
+    data_folder: Path, recording_list: Path, labels_folder: Path, written: str
+) -> None:
+    add_recording(data_folder, "a.mp4")
+    recording_list.write_text(HEADER + list_row("a.mp4"))
+    (labels_folder / "a.toml").write_text(
+        f'recording = "{written}"\nchannel = "TBS"\ncommercial_breaks = []\n'
+    )
+
+    report = validate(
+        data_folder, recording_list, labels_folder, FakeProbe({"a.mp4": BOTH_TRACKS})
+    )
+
+    assert [(e.subject, e.message) for e in report.errors] == [
+        (
+            "a.toml",
+            f"recording {written!r} isn't a fingerprint: 64 lower-case hex digits, "
+            "copied from the list of recordings",
+        )
+    ]
