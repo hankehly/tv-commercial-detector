@@ -57,9 +57,25 @@ _Avoid_: status, mode
 A saved broadcast, with its audio and video, used only for testing. The detector reads it exactly as if it were a live broadcast.
 _Avoid_: capture, clip
 
+**Fingerprint**:
+A hash of a recording file's contents that identifies the recording whatever its file name. A recording that changes after labeling gets a new fingerprint, so its labels no longer match it.
+_Avoid_: checksum, hash, recording ID
+
+**Data folder**:
+The folder, kept out of version control, that holds the benchmark's local and private files: recordings, logo files and saved tool output.
+_Avoid_: data directory, media folder
+
 **Label**:
 A human-marked start and end of one commercial break in a recording. Between them, a recording's labels say what was really on air at every moment.
 _Avoid_: annotation, tag
+
+**Label file**:
+The file in the repository holding one recording's labels and its channel. It belongs to its recording by fingerprint, not by file name.
+_Avoid_: annotation file
+
+**Logo file**:
+An image of one channel's on-screen logo, made by hand from our own recordings, that join_logo_scp uses to tell when the logo is on screen.
+_Avoid_: logo data
 
 **Candidate**:
 A detector being scored as a possible live detector. It never looks ahead.
