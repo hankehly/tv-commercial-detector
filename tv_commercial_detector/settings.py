@@ -12,6 +12,9 @@ DATA_FOLDER_VARIABLE = "TV_COMMERCIAL_DETECTOR_DATA_FOLDER"
 RECORDING_LIST = REPOSITORY_ROOT / "benchmark" / "recordings.csv"
 """The list of recordings, tracked in the repository."""
 
+LABELS_FOLDER = REPOSITORY_ROOT / "benchmark" / "labels"
+"""The folder of label files, one per recording, tracked in the repository."""
+
 
 def data_folder() -> Path:
     """Return the data folder: recordings, logo files and saved tool output.
