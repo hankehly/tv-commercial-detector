@@ -7,7 +7,7 @@ Telling commercial breaks apart from programs in Japanese TV broadcasts, live or
 ### Broadcast content
 
 **Program**:
-Everything on air that isn't a commercial break: the dramas, news, variety and other content listed in the TV guide, plus the short pieces around them such as next-episode previews (次回予告), sponsor credits and station IDs. In-program advertising and shopping programs that fill a whole time slot (通販番組) count as program too.
+The main program on air: the dramas, news, variety and other content listed in the TV guide, from its opening to the end of its own ending (theme song and ending credits). In-program advertising and shopping programs that fill a whole time slot (通販番組) count as program too. Everything else on air is part of a commercial break.
 _Avoid_: show, main content
 
 **Commercial**:
@@ -15,20 +15,27 @@ A single advertising spot, usually 15 or 30 seconds long. Includes spots from a 
 _Avoid_: ad, advert, CM, spot
 
 **Commercial break**:
-A continuous run of commercials and promos between two parts of a program, or between two programs.
-_Avoid_: break, ad break, CM break
+A continuous run of everything on air between two parts of a program, or between two programs: commercials, promos, sponsor credits, station IDs, next-episode previews and coming-up-next cards.
+_Avoid_: break, ad break, CM break, non-program
 
 **Promo**:
 A spot advertising the channel's other programs, events or films (番宣). Part of a commercial break.
 _Avoid_: trailer, teaser
 
 **Station ID**:
-A short channel identification or jingle. Counts as program, even when it sits right next to a commercial break.
+A short channel identification or jingle. Part of a commercial break, wherever it sits.
 _Avoid_: ident, bumper
 
 **Sponsor credit**:
-A card naming a program's sponsors (提供クレジット, "この番組は…の提供でお送りします"). Counts as program, even when it sits right next to a commercial break.
+A card naming a program's sponsors (提供クレジット, "この番組は…の提供でお送りします"). Part of a commercial break whenever it is on screen, even when it is laid over the program.
 _Avoid_: sponsor card, billboard
+
+**Next-episode preview**:
+A short look at the program's next episode (次回予告), shown after the program has ended. Part of a commercial break.
+_Avoid_: trailer
+
+**Coming-up-next card**:
+A short card announcing the program that starts next (「このあとは」). Part of a commercial break.
 
 **In-program advertising**:
 Advertising that is part of the program itself, such as a segment marked「PR」 or product placement. Counts as program.
