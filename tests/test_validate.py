@@ -24,7 +24,18 @@ class FakeProbe:
         self.results = results
 
     def probe(self, path: Path) -> ProbeResult:
-        """Return the scripted result for ``path``."""
+        """Return the scripted result for a recording.
+
+        Parameters
+        ----------
+        path : Path
+            The recording; only its file name is used.
+
+        Returns
+        -------
+        ProbeResult
+            The result scripted for that file name.
+        """
         return self.results[path.name]
 
 
@@ -45,14 +56,44 @@ def recording_list(tmp_path: Path) -> Path:
 
 
 def add_recording(data_folder: Path, name: str, content: bytes = b"video") -> Path:
-    """Write a placeholder recording into the data folder."""
+    """Write a placeholder recording into the data folder.
+
+    Parameters
+    ----------
+    data_folder : Path
+        The data folder.
+    name : str
+        The recording's file name.
+    content : bytes
+        The placeholder's bytes, which set its size and fingerprint.
+
+    Returns
+    -------
+    Path
+        The placeholder recording.
+    """
     path = data_folder / "recordings" / name
     path.write_bytes(content)
     return path
 
 
 def list_row(name: str, content: bytes = b"video", length: float = 3600.0) -> str:
-    """Return the list row matching a placeholder recording with ``content``."""
+    """Build the list row matching a placeholder recording.
+
+    Parameters
+    ----------
+    name : str
+        The recording's file name.
+    content : bytes
+        The placeholder's bytes.
+    length : float
+        The length to list, in seconds.
+
+    Returns
+    -------
+    str
+        The row, with a line ending.
+    """
     fingerprint = hashlib.sha256(content).hexdigest()
     return f"{name},{len(content)},{fingerprint},{length}\n"
 
@@ -194,6 +235,7 @@ def test_recording_not_in_the_list_is_skipped_with_the_row_to_add(
         )
     ]
     assert report.recording_count == 1
+    assert report.skipped_count == 1
     assert report.hours == 1.0
 
 

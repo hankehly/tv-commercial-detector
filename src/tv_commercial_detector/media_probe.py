@@ -45,16 +45,7 @@ class MediaProbe(Protocol):
 
 
 class Ffprobe:
-    """Media probe backed by the ``ffprobe`` command.
-
-    Parameters
-    ----------
-    command : str
-        The ffprobe executable to run.
-    """
-
-    def __init__(self, command: str = "ffprobe") -> None:
-        self.command = command
+    """Media probe backed by the ``ffprobe`` command on the PATH."""
 
     def probe(self, path: Path) -> ProbeResult:
         """Return the tracks and length of the recording at ``path``.
@@ -77,7 +68,7 @@ class Ffprobe:
         try:
             completed = subprocess.run(
                 [
-                    self.command,
+                    "ffprobe",
                     "-v",
                     "error",
                     "-show_entries",
@@ -91,7 +82,7 @@ class Ffprobe:
                 check=False,
             )
         except FileNotFoundError as e:
-            raise ProbeError(f"{self.command} not found") from e
+            raise ProbeError("ffprobe not found on the PATH") from e
         if completed.returncode != 0:
             raise ProbeError(completed.stderr.strip() or f"exit {completed.returncode}")
 
