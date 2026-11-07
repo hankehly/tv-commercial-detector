@@ -1,27 +1,14 @@
 """Tests for the command-line entry point and its settings."""
 
 import hashlib
-from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
-from loguru import logger
 
 from tv_commercial_detector import cli, settings
 from tv_commercial_detector.cli import main
 from tv_commercial_detector.media_probe import ProbeResult
 from tv_commercial_detector.settings import DATA_FOLDER_VARIABLE, data_folder
-
-
-@pytest.fixture
-def log() -> Iterator[list[str]]:
-    """Collect every logged line as ``LEVEL message``."""
-    lines: list[str] = []
-    sink = logger.add(
-        lambda m: lines.append(m.rstrip("\n")), format="{level} {message}"
-    )
-    yield lines
-    logger.remove(sink)
 
 
 def test_data_folder_defaults_to_data_at_the_repository_root(
