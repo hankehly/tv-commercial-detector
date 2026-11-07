@@ -3,7 +3,7 @@
 import os
 from pathlib import Path
 
-REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
+REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 """The repository root, for files tracked alongside the code."""
 
 DATA_FOLDER_VARIABLE = "TV_COMMERCIAL_DETECTOR_DATA_FOLDER"
