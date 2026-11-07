@@ -145,7 +145,12 @@ def test_listed_recordings_with_both_tracks_pass_and_are_summarised(
         + list_row("a.mp4", b"first", length=3600.0)
         + list_row("b.mp4", b"second", length=5400.0)
     )
-    probe = FakeProbe({"a.mp4": BOTH_TRACKS, "b.mp4": BOTH_TRACKS})
+    probe = FakeProbe(
+        {
+            "a.mp4": BOTH_TRACKS,
+            "b.mp4": ProbeResult(has_video=True, has_audio=True, length_seconds=5400.0),
+        }
+    )
 
     report = validate(data_folder, recording_list, probe)
 
@@ -300,6 +305,13 @@ def test_missing_list_of_recordings_is_an_error(
             "line 2: length_seconds 'long' is not a number",
         ),
         (HEADER + "a.mp4,5\n", "line 2: expected 4 values, found 2"),
+        *[
+            (
+                HEADER + f"a.mp4,5,abc,{length}\n",
+                f"line 2: length_seconds {length!r} is not a positive number",
+            )
+            for length in ["nan", "inf", "-60", "0"]
+        ],
     ],
 )
 def test_unreadable_list_of_recordings_is_an_error(
@@ -330,3 +342,58 @@ def test_recording_the_probe_cannot_read_is_an_error(
     assert [(e.subject, e.message) for e in report.errors] == [
         ("a.mp4", "media probe failed: Invalid data found when processing input")
     ]
+
+
+def test_listed_length_far_from_the_probed_length_is_an_error(
+    data_folder: Path, recording_list: Path
+) -> None:
+    add_recording(data_folder, "near.mp4", b"near")
+    add_recording(data_folder, "far.mp4", b"far")
+    recording_list.write_text(
+        HEADER
+        + list_row("near.mp4", b"near", length=3601.0)
+        + list_row("far.mp4", b"far", length=3601.5)
+    )
+    probe = FakeProbe({"near.mp4": BOTH_TRACKS, "far.mp4": BOTH_TRACKS})
+
+    report = validate(data_folder, recording_list, probe)
+
+    assert [(e.subject, e.message) for e in report.errors] == [
+        ("far.mp4", "length changed: listed as 3601.500 s, media probe says 3600.000 s")
+    ]
+
+
+def test_unlisted_copy_of_a_listed_recording_is_an_error(
+    data_folder: Path, recording_list: Path
+) -> None:
+    add_recording(data_folder, "a.mp4", b"same")
+    add_recording(data_folder, "copy.mp4", b"same")
+    recording_list.write_text(HEADER + list_row("a.mp4", b"same"))
+    probe = FakeProbe({"a.mp4": BOTH_TRACKS, "copy.mp4": BOTH_TRACKS})
+
+    report = validate(data_folder, recording_list, probe)
+
+    assert [(e.subject, e.message) for e in report.errors] == [
+        (
+            "copy.mp4",
+            "not in the list of recordings, but has the same fingerprint as a.mp4",
+        )
+    ]
+    assert report.warnings == []
+    assert report.skipped_count == 1
+
+
+def test_suggested_row_for_a_file_name_with_a_comma_can_be_pasted_in(
+    data_folder: Path, recording_list: Path
+) -> None:
+    add_recording(data_folder, "news, late.mp4")
+    probe = FakeProbe({"news, late.mp4": BOTH_TRACKS})
+    [warning] = validate(data_folder, recording_list, probe).warnings
+    suggested_row = warning.message.split("add this row: ")[1]
+
+    recording_list.write_text(HEADER + suggested_row + "\n")
+    report = validate(data_folder, recording_list, probe)
+
+    assert report.errors == []
+    assert report.warnings == []
+    assert report.recording_count == 1

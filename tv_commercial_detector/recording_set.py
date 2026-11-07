@@ -8,12 +8,17 @@ file directly inside the data folder's ``recordings/`` folder.
 
 import csv
 import hashlib
+import io
+import math
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from tv_commercial_detector.media_probe import MediaProbe, ProbeError, ProbeResult
 
 LIST_COLUMNS = ("file_name", "size_bytes", "fingerprint", "length_seconds")
+
+LENGTH_TOLERANCE_SECONDS = 1.0
+"""How far a listed length may be from the probed length before it's an error."""
 
 
 @dataclass(frozen=True)
@@ -33,10 +38,16 @@ class ListEntry:
         str
             The row, without a line ending, with the length to milliseconds.
         """
-        return (
-            f"{self.file_name},{self.size_bytes},{self.fingerprint},"
-            f"{self.length_seconds:.3f}"
+        row = io.StringIO()
+        csv.writer(row, lineterminator="").writerow(
+            [
+                self.file_name,
+                self.size_bytes,
+                self.fingerprint,
+                f"{self.length_seconds:.3f}",
+            ]
         )
+        return row.getvalue()
 
 
 @dataclass(frozen=True)
@@ -119,7 +130,7 @@ def validate(
     for path in recordings:
         entry = entries.get(path.name)
         if entry is None:
-            _warn_unlisted(path, probe, report)
+            _warn_unlisted(path, entries, probe, report)
         else:
             _check_listed(path, entry, probe, report)
     return report
@@ -181,7 +192,7 @@ def _check_listed(
     entry : ListEntry
         Its row in the list of recordings.
     probe : MediaProbe
-        Reports the recording's tracks.
+        Reports the recording's tracks and length.
     report : ValidationReport
         Receives any errors and the recording's length.
     """
@@ -204,19 +215,38 @@ def _check_listed(
         report.errors.append(Problem(path.name, "no video track"))
     if not result.has_audio:
         report.errors.append(Problem(path.name, "no audio track"))
+    if abs(result.length_seconds - entry.length_seconds) > LENGTH_TOLERANCE_SECONDS:
+        report.errors.append(
+            Problem(
+                path.name,
+                f"length changed: listed as {entry.length_seconds:.3f} s, "
+                f"media probe says {result.length_seconds:.3f} s",
+            )
+        )
 
 
-def _warn_unlisted(path: Path, probe: MediaProbe, report: ValidationReport) -> None:
+def _warn_unlisted(
+    path: Path,
+    listed: dict[str, ListEntry],
+    probe: MediaProbe,
+    report: ValidationReport,
+) -> None:
     """Skip an unlisted recording with a warning showing the row to add.
+
+    If the recording has the same fingerprint as a listed one, that is an error
+    instead, since its row could never be added.
 
     Parameters
     ----------
     path : Path
         The recording.
+    listed : dict[str, ListEntry]
+        The listed recordings, keyed by file name.
     probe : MediaProbe
         Reports the recording's length for the row.
     report : ValidationReport
-        Receives the warning, or an error if the probe fails.
+        Receives the warning, or an error if the probe fails or the recording
+        duplicates a listed one.
     """
     report.skipped_count += 1
     result = _probe(path, probe, report)
@@ -228,6 +258,16 @@ def _warn_unlisted(path: Path, probe: MediaProbe, report: ValidationReport) -> N
         fingerprint=_fingerprint(path),
         length_seconds=result.length_seconds,
     )
+    same = [e.file_name for e in listed.values() if e.fingerprint == entry.fingerprint]
+    if same:
+        report.errors.append(
+            Problem(
+                path.name,
+                "not in the list of recordings, but has the same fingerprint as "
+                f"{same[0]}",
+            )
+        )
+        return
     report.warnings.append(
         Problem(
             path.name,
@@ -345,6 +385,10 @@ def _parse_row(values: list[str], line: int) -> ListEntry:
         raise _ListError(
             f"line {line}: length_seconds {length_seconds!r} is not a number"
         ) from None
+    if not (math.isfinite(length) and length > 0):
+        raise _ListError(
+            f"line {line}: length_seconds {length_seconds!r} is not a positive number"
+        )
     return ListEntry(file_name, size, fingerprint, length)
 
 
