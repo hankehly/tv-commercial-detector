@@ -41,7 +41,7 @@ class ScoredRecording:
     file_name: str
     channel: str
     hours: float
-    commercial_breaks: int
+    commercial_break_count: int
 
 
 @dataclass
@@ -63,6 +63,16 @@ class Scorecard:
     recordings: list[ScoredRecording]
     detectors: list[DetectorScorecard]
 
+    @property
+    def hours(self) -> float:
+        """The total length of the recordings scored, in hours."""
+        return sum(recording.hours for recording in self.recordings)
+
+    @property
+    def commercial_break_count(self) -> int:
+        """How many labeled commercial breaks the recordings scored have."""
+        return sum(recording.commercial_break_count for recording in self.recordings)
+
     def to_json(self) -> dict:
         """Write the scorecard as plain JSON values.
 
@@ -78,7 +88,7 @@ class Scorecard:
                     "file_name": recording.file_name,
                     "channel": recording.channel,
                     "hours": recording.hours,
-                    "commercial_breaks": recording.commercial_breaks,
+                    "commercial_breaks": recording.commercial_break_count,
                 }
                 for recording in self.recordings
             ],

@@ -62,6 +62,11 @@ class LabeledRecording:
     entry: ListEntry
     label_file: LabelFile
 
+    @property
+    def hours(self) -> float:
+        """The recording's length in hours, from the list of recordings."""
+        return self.entry.length_seconds / 3600
+
 
 @dataclass(frozen=True)
 class Problem:

@@ -287,6 +287,30 @@ def test_unmatched_reports_and_extra_pieces_are_both_false_flips(
     assert overall["end_offset_median"]["value"] == 0.0
 
 
+def test_one_reported_commercial_break_spanning_two_labeled_ones_matches_both(
+    recording_set: RecordingSet,
+) -> None:
+    # 50 to 420 overlaps both 60 to 180 and 300 to 400, so neither is missed and
+    # it is no false flip. Its start is 10 s early for the first, 250 s early
+    # for the second; its end is 240 s late for the first, 20 s late for the
+    # second.
+    recording_set.add(
+        "a.mp4", 3600.0, [("00:01:00", "00:03:00"), ("00:05:00", "00:06:40")]
+    )
+    detector = FakeDetector("merged", {"a.mp4": [(50.0, 420.0)]})
+
+    scorecard = recording_set.run(detector)
+
+    overall = scorecard["detectors"][0]["overall"]
+    assert overall["missed_commercial_breaks"]["value"] == 0
+    assert overall["false_flips_per_hour"]["value"] == 0.0
+    assert overall["start_offset_median"] == {
+        "value": -130.0,
+        "based_on": {"commercial_breaks": 2},
+    }
+    assert overall["end_offset_median"]["value"] == 130.0
+
+
 def test_edge_offsets_give_median_and_95th_percentile_sizes_and_signed_medians(
     recording_set: RecordingSet,
 ) -> None:
@@ -457,6 +481,10 @@ def test_report_with_a_commercial_break_that_does_not_end_after_it_starts_is_an_
         "value": 0,
         "based_on": {"commercial_breaks": 0},
     }
+    assert scored["overall"]["false_flips_per_hour"] == {
+        "value": None,
+        "based_on": {"hours": 0.0},
+    }
 
 
 def test_each_run_saves_its_scorecard_in_a_new_folder_named_after_its_start(
@@ -521,7 +549,7 @@ def test_run_command_prints_the_scorecard_as_a_table_and_reports_errors(
     monkeypatch.setattr(settings, "RECORDING_LIST", recording_set.recording_list)
     monkeypatch.setattr(settings, "LABELS_FOLDER", recording_set.labels_folder)
     monkeypatch.setattr(cli, "Ffprobe", lambda: FakeProbe(recording_set.lengths))
-    monkeypatch.setattr(cli, "look_ahead_detectors", lambda data_folder: [detector])
+    monkeypatch.setattr(cli, "look_ahead_detectors", lambda: [detector])
 
     exit_code = main(["run"])
 

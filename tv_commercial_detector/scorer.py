@@ -2,15 +2,22 @@
 
 How look-ahead detectors are scored:
 
-- A reported commercial break *matches* a labeled one if they overlap by more
-  than 0.5 s.
-- **Missed commercial breaks**: labeled ones matched by no reported one.
-- **False flips**: reported ones matching no labeled one, plus each extra piece
-  when one labeled commercial break is matched by several reported ones.
-- **Edge offsets**: for each matched labeled commercial break, the start offset
-  is the earliest matching reported start minus the labeled start, and the end
-  offset is the latest matching reported end minus the labeled end. Negative
-  means early.
+=========================  ====================================================
+Rule                       How it is counted
+=========================  ====================================================
+Match                      A reported and a labeled commercial break overlap by
+                           more than 0.5 s. One reported commercial break may
+                           match several labeled ones.
+Missed commercial break    A labeled one that no reported one matches.
+False flip                 A reported one that matches no labeled one, plus each
+                           extra piece when several reported ones match one
+                           labeled one.
+Start offset               Earliest matching reported start minus the labeled
+                           start, for each matched labeled one. Negative is
+                           early.
+End offset                 Latest matching reported end minus the labeled end.
+                           Negative is early.
+=========================  ====================================================
 
 Figures for several recordings pool every commercial break and hour across them;
 they aren't averages of per-recording figures.
@@ -18,7 +25,7 @@ they aren't averages of per-recording figures.
 
 import math
 import statistics
-from collections.abc import Iterable
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 from tv_commercial_detector.detectors import LookAheadReport
@@ -131,12 +138,12 @@ def tally_look_ahead(
     for labeled in recording.label_file.commercial_breaks:
         matches = [
             index
-            for index, candidate in enumerate(reported)
+            for index, reported_break in enumerate(reported)
             if _overlap(
                 labeled.start_seconds,
                 labeled.end_seconds,
-                candidate.start_seconds,
-                candidate.end_seconds,
+                reported_break.start_seconds,
+                reported_break.end_seconds,
             )
             > MATCH_OVERLAP_SECONDS
         ]
@@ -153,7 +160,7 @@ def tally_look_ahead(
         commercial_breaks=len(recording.label_file.commercial_breaks),
         missed=missed,
         false_flips=len(reported) - len(matched_reported) + extra_pieces,
-        hours=recording.entry.length_seconds / 3600,
+        hours=recording.hours,
         start_offsets=tuple(start_offsets),
         end_offsets=tuple(end_offsets),
     )
@@ -194,12 +201,12 @@ def _milliseconds(seconds: float) -> float:
     return round(seconds, 3) + 0.0
 
 
-def _median(values: Iterable[float]) -> float | None:
+def _median(values: Sequence[float]) -> float | None:
     """Return the median of some values.
 
     Parameters
     ----------
-    values : Iterable[float]
+    values : Sequence[float]
         The values.
 
     Returns
@@ -207,11 +214,10 @@ def _median(values: Iterable[float]) -> float | None:
     float | None
         The median, or ``None`` if there are no values.
     """
-    values = list(values)
     return statistics.median(values) if values else None
 
 
-def _percentile(values: list[float], percent: float) -> float | None:
+def _percentile(values: Sequence[float], percent: float) -> float | None:
     """Return a percentile, interpolating linearly between the closest values.
 
     This is the usual definition (NumPy's default): with ``n`` sorted values,
@@ -219,7 +225,7 @@ def _percentile(values: list[float], percent: float) -> float | None:
 
     Parameters
     ----------
-    values : list[float]
+    values : Sequence[float]
         The values.
     percent : float
         The percentile, from 0 to 100.

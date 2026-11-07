@@ -226,6 +226,6 @@ def _scored_recording(recording: LabeledRecording) -> ScoredRecording:
     return ScoredRecording(
         file_name=recording.path.name,
         channel=recording.label_file.channel,
-        hours=recording.entry.length_seconds / 3600,
-        commercial_breaks=len(recording.label_file.commercial_breaks),
+        hours=recording.hours,
+        commercial_break_count=len(recording.label_file.commercial_breaks),
     )

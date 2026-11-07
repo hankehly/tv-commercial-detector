@@ -41,13 +41,8 @@ def main(argv: list[str] | None = None) -> int:
     return _validate()
 
 
-def look_ahead_detectors(data_folder: Path) -> list[LookAheadDetector]:
+def look_ahead_detectors() -> list[LookAheadDetector]:
     """Return the look-ahead detectors that ``run`` scores.
-
-    Parameters
-    ----------
-    data_folder : Path
-        The data folder, where detectors keep their saved output.
 
     Returns
     -------
@@ -67,7 +62,7 @@ def _run() -> int:
         errors, so nothing was run, or a detector failed on a recording.
     """
     data_folder = _log_locations()
-    detectors = look_ahead_detectors(data_folder)
+    detectors = look_ahead_detectors()
     if not detectors:
         logger.warning("No detectors to run yet.")
     result = benchmark.run(
@@ -84,11 +79,10 @@ def _run() -> int:
         return 1
 
     scorecard = result.scorecard
-    hours = sum(recording.hours for recording in scorecard.recordings)
-    breaks = sum(recording.commercial_breaks for recording in scorecard.recordings)
     logger.info(
-        f"Scored {len(scorecard.recordings)} recordings: {hours:.1f} hours, "
-        f"{breaks} labeled commercial breaks"
+        f"Scored {len(scorecard.recordings)} recordings: "
+        f"{scorecard.hours:.1f} hours, "
+        f"{scorecard.commercial_break_count} labeled commercial breaks"
     )
     for line in format_tables(scorecard):
         logger.info(line)

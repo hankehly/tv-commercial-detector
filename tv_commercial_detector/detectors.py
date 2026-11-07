@@ -85,6 +85,8 @@ class LookAheadDetector(Detector, Protocol):
         ------
         DetectorError
             If the recording can't be analyzed, for example because the tool
-            behind the detector is missing or fails.
+            behind the detector is missing or fails. The benchmark records it
+            as an error for that recording and carries on; any other
+            exception is a bug and stops the run.
         """
         ...
