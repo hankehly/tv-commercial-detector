@@ -230,7 +230,7 @@ class ExternalTool:
                 stderr.open("w") as err,
             ):
                 completed = subprocess.run(
-                    [*self.command, *arguments],
+                    [*_runnable(self.command), *arguments],
                     cwd=folder,
                     stdout=out,
                     stderr=err,
@@ -313,3 +313,25 @@ def _saved_source(folder: Path) -> dict | None:
         return json.loads((folder / SOURCE_FILE_NAME).read_text())
     except OSError, json.JSONDecodeError:
         return None
+
+
+def _runnable(command: list[str]) -> list[str]:
+    """Make a command's program findable from inside the tool's output folder.
+
+    Parameters
+    ----------
+    command : list[str]
+        The configured command, before its arguments.
+
+    Returns
+    -------
+    list[str]
+        The command with its program made absolute when it is a relative path
+        with a folder in it, such as ``./tools/comskip-wrapper``, so it is
+        found from where the run started. A bare name such as ``comskip`` is
+        left for the PATH to find.
+    """
+    program, *rest = command
+    if "/" in program:
+        program = str(Path(program).absolute())
+    return [program, *rest]

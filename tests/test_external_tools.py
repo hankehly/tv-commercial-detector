@@ -515,3 +515,23 @@ def test_a_relative_data_folder_gives_the_tool_paths_it_can_use(
 
     assert scorecard["detectors"][0]["errors"] == {}
     assert offsets(scorecard, "a.mp4") == (2.0, -2.0)
+
+
+def test_a_command_given_as_a_relative_path_is_found_from_where_the_run_started(
+    recording_set: RecordingSet, stand_in: StandIn, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    wrapper = stand_in.folder / "wrapper.sh"
+    wrapper.write_text(
+        f'#!/bin/sh\nexec "{sys.executable}" "$(dirname "$0")/stand_in.py" "$@"\n'
+    )
+    wrapper.chmod(0o755)
+    monkeypatch.chdir(stand_in.folder.parent)
+    recording_set.add("a.mp4", 3600.0, [("00:01:00", "00:03:00")])
+    stand_in.answer("a.mp4", "fps 30\n1860 5340\n")
+
+    scorecard = recording_set.run(
+        stand_in.detector(recording_set.data_folder, command=["./stand-in/wrapper.sh"])
+    )
+
+    assert scorecard["detectors"][0]["errors"] == {}
+    assert offsets(scorecard, "a.mp4") == (2.0, -2.0)
