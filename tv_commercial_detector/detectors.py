@@ -24,12 +24,15 @@ class Recording:
     """What a detector is told about the recording it analyzes.
 
     It holds no labels, so a detector can't see what it is scored against.
+    ``frame_rate`` is its video's frames per second as the media probe reported
+    it, or ``None`` when the probe couldn't tell.
     """
 
     path: Path
     fingerprint: str
     length_seconds: float
     channel: str
+    frame_rate: float | None = None
 
 
 @dataclass(frozen=True)

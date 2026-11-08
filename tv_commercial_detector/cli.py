@@ -31,18 +31,32 @@ def main(argv: list[str] | None = None) -> int:
     subcommands.add_parser(
         "validate", help="Check the recording set without running any detector."
     )
-    subcommands.add_parser(
+    run_parser = subcommands.add_parser(
         "run",
         help="Score the detectors on every labeled recording and save a scorecard.",
     )
+    run_parser.add_argument(
+        "--rerun",
+        action="store_true",
+        help="Run every tool afresh instead of reusing its saved output, for "
+        "example after remaking a logo file.",
+    )
     args = parser.parse_args(argv)
     if args.command == "run":
-        return _run()
+        return _run(rerun=args.rerun)
     return _validate()
 
 
-def look_ahead_detectors() -> list[LookAheadDetector]:
+def look_ahead_detectors(data_folder: Path, rerun: bool) -> list[LookAheadDetector]:
     """Return the look-ahead detectors that ``run`` scores.
+
+    Parameters
+    ----------
+    data_folder : Path
+        The data folder, where tools' output is saved.
+    rerun : bool
+        Whether tools analyze every recording afresh instead of reusing their
+        saved output.
 
     Returns
     -------
@@ -52,8 +66,14 @@ def look_ahead_detectors() -> list[LookAheadDetector]:
     return []
 
 
-def _run() -> int:
+def _run(rerun: bool) -> int:
     """Validate the recording set, score the detectors and log the scorecard.
+
+    Parameters
+    ----------
+    rerun : bool
+        Whether tools analyze every recording afresh instead of reusing their
+        saved output.
 
     Returns
     -------
@@ -62,7 +82,7 @@ def _run() -> int:
         errors, so nothing was run, or a detector failed on a recording.
     """
     data_folder = _log_locations()
-    detectors = look_ahead_detectors()
+    detectors = look_ahead_detectors(data_folder, rerun)
     if not detectors:
         logger.warning("No detectors to run yet.")
     result = benchmark.run(

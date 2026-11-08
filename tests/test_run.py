@@ -10,10 +10,10 @@ import hashlib
 import json
 import re
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
+from recording_sets import STARTED_AT, RecordingSet
 
 from tv_commercial_detector import cli, settings
 from tv_commercial_detector.benchmark import run
@@ -25,34 +25,7 @@ from tv_commercial_detector.detectors import (
     Recording,
     ReportedCommercialBreak,
 )
-from tv_commercial_detector.media_probe import ProbeResult
 from tv_commercial_detector.settings import DATA_FOLDER_VARIABLE
-
-STARTED_AT = datetime(2026, 11, 8, 14, 3, 22, tzinfo=timezone(timedelta(hours=9)))
-
-
-class FakeProbe:
-    """Media probe that finds both tracks and the listed length in every recording."""
-
-    def __init__(self, lengths: dict[str, float]) -> None:
-        self.lengths = lengths
-
-    def probe(self, path: Path) -> ProbeResult:
-        """Return both tracks and the length scripted for a recording.
-
-        Parameters
-        ----------
-        path : Path
-            The recording; only its file name is used.
-
-        Returns
-        -------
-        ProbeResult
-            Both tracks and the scripted length.
-        """
-        return ProbeResult(
-            has_video=True, has_audio=True, length_seconds=self.lengths[path.name]
-        )
 
 
 @dataclass
@@ -93,104 +66,6 @@ class FakeDetector:
         return LookAheadReport(
             tuple(ReportedCommercialBreak(start, end) for start, end in script)
         )
-
-
-@dataclass
-class RecordingSet:
-    """A recording set in temporary folders, built up one recording at a time."""
-
-    root: Path
-    lengths: dict[str, float] = field(default_factory=dict)
-
-    @property
-    def data_folder(self) -> Path:
-        """The data folder."""
-        return self.root / "data"
-
-    @property
-    def recording_list(self) -> Path:
-        """The list of recordings."""
-        return self.root / "recordings.csv"
-
-    @property
-    def labels_folder(self) -> Path:
-        """The folder of label files."""
-        return self.root / "labels"
-
-    def add(
-        self,
-        name: str,
-        length_seconds: float,
-        commercial_breaks: list[tuple[str, str]],
-        channel: str = "TBS",
-    ) -> None:
-        """Add a placeholder recording, its row in the list and its label file.
-
-        Parameters
-        ----------
-        name : str
-            The recording's file name.
-        length_seconds : float
-            Its length, as listed and as the fake media probe reports it.
-        commercial_breaks : list[tuple[str, str]]
-            Its labeled commercial breaks, as written start and end times.
-        channel : str
-            Its channel.
-        """
-        content = name.encode()
-        fingerprint = hashlib.sha256(content).hexdigest()
-        (self.data_folder / "recordings").mkdir(parents=True, exist_ok=True)
-        (self.data_folder / "recordings" / name).write_bytes(content)
-        if not self.recording_list.exists():
-            self.recording_list.write_text(
-                "file_name,size_bytes,fingerprint,length_seconds\n"
-            )
-        with self.recording_list.open("a") as f:
-            f.write(f"{name},{len(content)},{fingerprint},{length_seconds}\n")
-        self.labels_folder.mkdir(exist_ok=True)
-        entries = ", ".join(
-            f'{{ start = "{start}", end = "{end}" }}'
-            for start, end in commercial_breaks
-        )
-        (self.labels_folder / f"{Path(name).stem}.toml").write_text(
-            f'recording = "{fingerprint}"\n'
-            f'channel = "{channel}"\n'
-            f"commercial_breaks = [{entries}]\n"
-        )
-        self.lengths[name] = length_seconds
-
-    def run(self, *detectors: FakeDetector, started_at: datetime = STARTED_AT) -> dict:
-        """Run the benchmark and return the scorecard it saved.
-
-        Parameters
-        ----------
-        *detectors : FakeDetector
-            The detectors to score.
-        started_at : datetime
-            When the run starts.
-
-        Returns
-        -------
-        dict
-            The saved scorecard, read back from its JSON file.
-        """
-        result = run(
-            self.data_folder,
-            self.recording_list,
-            self.labels_folder,
-            FakeProbe(self.lengths),
-            list(detectors),
-            started_at,
-        )
-        assert result.validation.errors == []
-        assert result.scorecard_path is not None
-        return json.loads(result.scorecard_path.read_text())
-
-
-@pytest.fixture
-def recording_set(tmp_path: Path) -> RecordingSet:
-    """Return an empty recording set in a temporary folder."""
-    return RecordingSet(tmp_path)
 
 
 def test_detector_that_finds_every_commercial_break_exactly_misses_none(
@@ -519,7 +394,7 @@ def test_each_run_saves_its_scorecard_in_a_new_folder_named_after_its_start(
             recording_set.data_folder,
             recording_set.recording_list,
             recording_set.labels_folder,
-            FakeProbe(recording_set.lengths),
+            recording_set.probe(),
             [detector],
             STARTED_AT,
         ).scorecard_path
@@ -546,7 +421,7 @@ def test_run_with_validation_errors_scores_nothing_and_saves_nothing(
         recording_set.data_folder,
         recording_set.recording_list,
         recording_set.labels_folder,
-        FakeProbe(recording_set.lengths),
+        recording_set.probe(),
         [detector],
         STARTED_AT,
     )
@@ -569,8 +444,10 @@ def test_run_command_prints_the_scorecard_as_a_table_and_reports_errors(
     monkeypatch.setenv(DATA_FOLDER_VARIABLE, str(recording_set.data_folder))
     monkeypatch.setattr(settings, "RECORDING_LIST", recording_set.recording_list)
     monkeypatch.setattr(settings, "LABELS_FOLDER", recording_set.labels_folder)
-    monkeypatch.setattr(cli, "Ffprobe", lambda: FakeProbe(recording_set.lengths))
-    monkeypatch.setattr(cli, "look_ahead_detectors", lambda: [detector])
+    monkeypatch.setattr(cli, "Ffprobe", recording_set.probe)
+    monkeypatch.setattr(
+        cli, "look_ahead_detectors", lambda data_folder, rerun: [detector]
+    )
 
     exit_code = main(["run"])
 

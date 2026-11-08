@@ -1,6 +1,7 @@
 """The media probe: asks ffprobe what tracks a recording has and how long it is."""
 
 import json
+import math
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -9,11 +10,16 @@ from typing import Protocol
 
 @dataclass(frozen=True)
 class ProbeResult:
-    """What the media probe reports about one recording."""
+    """What the media probe reports about one recording.
+
+    ``frame_rate`` is the video's frames per second, or ``None`` when the probe
+    can't tell.
+    """
 
     has_video: bool
     has_audio: bool
     length_seconds: float
+    frame_rate: float | None = None
 
 
 class ProbeError(Exception):
@@ -58,7 +64,8 @@ class Ffprobe:
         Returns
         -------
         ProbeResult
-            Whether it has a video and an audio track, and its length.
+            Whether it has a video and an audio track, its length, and the
+            video's average frame rate.
 
         Raises
         ------
@@ -72,7 +79,7 @@ class Ffprobe:
                     "-v",
                     "error",
                     "-show_entries",
-                    "stream=codec_type:format=duration",
+                    "stream=codec_type,avg_frame_rate:format=duration",
                     "-of",
                     "json",
                     str(path),
@@ -91,9 +98,36 @@ class Ffprobe:
             length_seconds = float(info["format"]["duration"])
         except (json.JSONDecodeError, KeyError, TypeError, ValueError) as e:
             raise ProbeError(f"could not read the length from ffprobe: {e}") from e
-        codec_types = {stream.get("codec_type") for stream in info.get("streams", [])}
+        streams = info.get("streams", [])
+        codec_types = {stream.get("codec_type") for stream in streams}
+        video = [s for s in streams if s.get("codec_type") == "video"]
         return ProbeResult(
             has_video="video" in codec_types,
             has_audio="audio" in codec_types,
             length_seconds=length_seconds,
+            frame_rate=_frame_rate(video[0].get("avg_frame_rate")) if video else None,
         )
+
+
+def _frame_rate(value: object) -> float | None:
+    """Read a frame rate as ffprobe writes it, such as ``30000/1001``.
+
+    Parameters
+    ----------
+    value : object
+        The ``avg_frame_rate`` ffprobe gave for the video stream.
+
+    Returns
+    -------
+    float | None
+        The frames per second, or ``None`` if ffprobe couldn't tell, which it
+        writes as ``0/0``.
+    """
+    if not isinstance(value, str):
+        return None
+    try:
+        frames, _, seconds = value.partition("/")
+        rate = float(frames) / float(seconds or 1)
+    except ValueError, ZeroDivisionError:
+        return None
+    return rate if math.isfinite(rate) and rate > 0 else None

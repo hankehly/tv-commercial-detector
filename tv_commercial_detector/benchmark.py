@@ -224,13 +224,14 @@ def _for_detector(recording: LabeledRecording) -> Recording:
     Returns
     -------
     Recording
-        Its path, fingerprint, length and channel.
+        Its path, fingerprint, length, channel and frame rate.
     """
     return Recording(
         path=recording.path,
         fingerprint=recording.entry.fingerprint,
         length_seconds=recording.entry.length_seconds,
         channel=recording.label_file.channel,
+        frame_rate=recording.frame_rate,
     )
 
 
