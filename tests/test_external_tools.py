@@ -499,3 +499,19 @@ def test_run_command_reuses_saved_output_unless_given_the_rerun_option(
     assert stand_in.calls == ["a.mp4", "a.mp4"]
     assert log.count("INFO stand-in: analyzing a.mp4") == 2
     assert log.count("INFO stand-in: reusing saved output for a.mp4") == 1
+
+
+def test_a_relative_data_folder_gives_the_tool_paths_it_can_use(
+    tmp_path: Path, stand_in: StandIn, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The tool runs inside its output folder, so paths relative to where the
+    # benchmark started would point nowhere from there.
+    monkeypatch.chdir(tmp_path)
+    recording_set = RecordingSet(Path("."))
+    recording_set.add("a.mp4", 3600.0, [("00:01:00", "00:03:00")])
+    stand_in.answer("a.mp4", "fps 30\n1860 5340\n")
+
+    scorecard = recording_set.run(stand_in.detector(recording_set.data_folder))
+
+    assert scorecard["detectors"][0]["errors"] == {}
+    assert offsets(scorecard, "a.mp4") == (2.0, -2.0)

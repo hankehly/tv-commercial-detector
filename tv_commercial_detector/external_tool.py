@@ -10,7 +10,7 @@ import json
 import math
 import shutil
 import subprocess
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Protocol
 
@@ -67,9 +67,10 @@ class ToolAdapter(Protocol):
         Parameters
         ----------
         recording : Recording
-            The recording to analyze.
+            The recording to analyze, with an absolute path.
         output_folder : Path
-            The folder the tool must write its output to. It is emptied, or
+            The absolute path of the folder the tool must write its output to.
+            It is emptied, or
             created, after this returns, and the tool runs with it as its
             working folder.
 
@@ -179,7 +180,13 @@ class ExternalTool:
             cleanly is reused even if it can't be read, so a fixed adapter can
             read it again without rerunning the tool.
         """
-        folder = self.data_folder / TOOL_OUTPUT_FOLDER / self.name / recording.path.stem
+        # The tool runs inside its output folder, so it is given absolute
+        # paths: ones relative to where the benchmark started would point
+        # nowhere from there.
+        recording = replace(recording, path=recording.path.absolute())
+        folder = (
+            self.data_folder / TOOL_OUTPUT_FOLDER / self.name / recording.path.stem
+        ).absolute()
         source = {"fingerprint": recording.fingerprint, "command": self.command}
         if not self.rerun and _saved_source(folder) == source:
             logger.info(f"{self.name}: reusing saved output for {recording.path.name}")
