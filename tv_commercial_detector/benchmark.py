@@ -6,12 +6,17 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from typing import cast
 
 from tv_commercial_detector.detectors import (
+    Candidate,
+    CandidateReport,
     DetectorError,
+    DetectorKind,
     LookAheadDetector,
     LookAheadReport,
     Recording,
+    State,
 )
 from tv_commercial_detector.media_probe import MediaProbe
 from tv_commercial_detector.recording_set import (
@@ -24,7 +29,12 @@ from tv_commercial_detector.scorecard import (
     Scorecard,
     ScoredRecording,
 )
-from tv_commercial_detector.scorer import LookAheadTally, tally_look_ahead
+from tv_commercial_detector.scorer import (
+    CandidateTally,
+    LookAheadTally,
+    tally_candidate,
+    tally_look_ahead,
+)
 
 SCORECARD_FILE_NAME = "scorecard.json"
 
@@ -50,7 +60,7 @@ def run(
     recording_list: Path,
     labels_folder: Path,
     probe: MediaProbe,
-    detectors: Sequence[LookAheadDetector],
+    detectors: Sequence[LookAheadDetector | Candidate],
     started_at: datetime,
 ) -> RunResult:
     """Validate the recording set, score each detector on it and save the scorecard.
@@ -67,8 +77,8 @@ def run(
         The folder holding the label files.
     probe : MediaProbe
         Reports each recording's tracks and length.
-    detectors : Sequence[LookAheadDetector]
-        The detectors to score.
+    detectors : Sequence[LookAheadDetector | Candidate]
+        The detectors to score, of either kind.
     started_at : datetime
         When the run started; it names the run's folder.
 
@@ -121,6 +131,118 @@ def _new_run_folder(runs_folder: Path, started_at: datetime) -> Path:
 
 
 def _score(
+    detector: LookAheadDetector | Candidate, recordings: list[LabeledRecording]
+) -> DetectorScorecard:
+    """Score a detector of either kind on every labeled recording.
+
+    Parameters
+    ----------
+    detector : LookAheadDetector | Candidate
+        The detector.
+    recordings : list[LabeledRecording]
+        The labeled recordings.
+
+    Returns
+    -------
+    DetectorScorecard
+        The detector's measures, overall and per recording, its errors and,
+        for a candidate, its verdicts.
+    """
+    if detector.kind == DetectorKind.CANDIDATE:
+        return _score_candidate(cast(Candidate, detector), recordings)
+    return _score_look_ahead(cast(LookAheadDetector, detector), recordings)
+
+
+def _score_candidate(
+    candidate: Candidate, recordings: list[LabeledRecording]
+) -> DetectorScorecard:
+    """Give a candidate a full run over every labeled recording and score it.
+
+    A recording the candidate fails on, or reports nonsense for, is recorded
+    as an error and left out of its measures.
+
+    Parameters
+    ----------
+    candidate : Candidate
+        The candidate.
+    recordings : list[LabeledRecording]
+        The labeled recordings.
+
+    Returns
+    -------
+    DetectorScorecard
+        The candidate's measures, overall and per recording, its errors, and
+        its verdicts on the overall figures.
+    """
+    overall = CandidateTally()
+    per_recording = {}
+    errors = {}
+    for recording in recordings:
+        length = recording.entry.length_seconds
+        try:
+            report = candidate.run(_for_detector(recording), 0.0, length)
+            _check_candidate_report(report, start_seconds=0.0)
+        except DetectorError as e:
+            errors[recording.path.name] = str(e)
+            continue
+        tally = tally_candidate(recording, report)
+        overall += tally
+        per_recording[recording.path.name] = tally.measures()
+    return DetectorScorecard(
+        name=candidate.name,
+        kind=candidate.kind,
+        overall=overall.measures(),
+        per_recording=per_recording,
+        errors=errors,
+        verdicts=overall.verdicts(),
+    )
+
+
+def _check_candidate_report(report: CandidateReport, start_seconds: float) -> None:
+    """Check that a candidate's report can be scored.
+
+    Parameters
+    ----------
+    report : CandidateReport
+        The report.
+    start_seconds : float
+        Where the run started; no change can be reported before it.
+
+    Raises
+    ------
+    DetectorError
+        If a change has a state that isn't one of the three, or a time that
+        isn't a finite number, comes before the run's start or comes before the
+        change before it; or if the processing time isn't a finite number of
+        seconds, 0 or more.
+    """
+    previous = start_seconds
+    for number, change in enumerate(report.changes, start=1):
+        at = change.reported_at_seconds
+        described = f"state change {number} ({change.state} at {at} s)"
+        if change.state not in list(State):
+            raise DetectorError(
+                f"{described} has a state that isn't COMMERCIAL_BREAK, PROGRAM "
+                "or UNKNOWN"
+            )
+        if not _is_finite_number(at):
+            raise DetectorError(f"{described} has a time that isn't a finite number")
+        if at < start_seconds:
+            raise DetectorError(
+                f"{described} is reported before the run's start at {start_seconds} s"
+            )
+        if at < previous:
+            raise DetectorError(f"{described} is reported before the one before it")
+        previous = at
+    processing = report.processing_seconds
+    if not (_is_finite_number(processing) and processing >= 0):
+        raise DetectorError(
+            f"processing time {processing} s isn't a finite number of seconds, "
+            "0 or more"
+        )
+
+
+def _score_look_ahead(
     detector: LookAheadDetector, recordings: list[LabeledRecording]
 ) -> DetectorScorecard:
     """Run a look-ahead detector on every labeled recording and score it.

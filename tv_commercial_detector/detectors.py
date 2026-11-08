@@ -2,8 +2,8 @@
 
 A look-ahead detector analyzes a whole recording at once and reports the
 commercial breaks it found, in seconds from the start of the recording. A
-candidate runs over a stretch of a recording as if it were live; candidates are
-scored in later work.
+candidate runs over a stretch of a recording as if it were live and reports
+each change of state with the moment it would have reached a viewer.
 """
 
 from dataclasses import dataclass
@@ -50,6 +50,41 @@ class LookAheadReport:
     commercial_breaks: tuple[ReportedCommercialBreak, ...]
 
 
+class State(StrEnum):
+    """What a candidate says is on air."""
+
+    COMMERCIAL_BREAK = "COMMERCIAL_BREAK"
+    PROGRAM = "PROGRAM"
+    UNKNOWN = "UNKNOWN"
+
+
+@dataclass(frozen=True)
+class StateChange:
+    """One change of a candidate's state.
+
+    ``reported_at_seconds`` is the broadcast position, in seconds from the start
+    of the recording, at which the change would have reached a viewer live: the
+    position of the newest broadcast the candidate had used, plus the
+    processing time it took to decide.
+    """
+
+    state: State
+    reported_at_seconds: float
+
+
+@dataclass(frozen=True)
+class CandidateReport:
+    """What a candidate reports for one run over a stretch of a recording.
+
+    ``changes`` are in the order they were reported; before the first one the
+    candidate's state is ``UNKNOWN``. ``processing_seconds`` is the run's total
+    processing time, in seconds of wall-clock time.
+    """
+
+    changes: tuple[StateChange, ...]
+    processing_seconds: float
+
+
 class DetectorError(Exception):
     """A detector could not analyze one recording; the message says why."""
 
@@ -91,5 +126,42 @@ class LookAheadDetector(Detector, Protocol):
             behind the detector is missing or fails. The benchmark records it
             as an error for that recording and carries on; any other
             exception is a bug and stops the run.
+        """
+        ...
+
+
+class Candidate(Detector, Protocol):
+    """A detector that runs over a stretch of a recording as if it were live.
+
+    It never looks ahead (ADR 0004): each change uses only the broadcast up to
+    the moment it reports. How it is fed the recording as if live is its own
+    concern.
+    """
+
+    def run(
+        self, recording: Recording, start_seconds: float, end_seconds: float
+    ) -> CandidateReport:
+        """Run over a stretch of a recording and report each change of state.
+
+        Parameters
+        ----------
+        recording : Recording
+            The recording.
+        start_seconds : float
+            Where the run starts, in seconds from the start of the recording.
+        end_seconds : float
+            Where the run ends, in seconds from the start of the recording.
+
+        Returns
+        -------
+        CandidateReport
+            The changes of state, in order, and the run's processing time.
+
+        Raises
+        ------
+        DetectorError
+            If the candidate can't run over the recording. The benchmark
+            records it as an error for that recording and carries on; any
+            other exception is a bug and stops the run.
         """
         ...

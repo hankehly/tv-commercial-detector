@@ -12,7 +12,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from tv_commercial_detector.benchmark import run
-from tv_commercial_detector.detectors import LookAheadDetector
+from tv_commercial_detector.detectors import Candidate, LookAheadDetector
 from tv_commercial_detector.media_probe import ProbeResult
 
 STARTED_AT = datetime(2026, 11, 8, 14, 3, 22, tzinfo=timezone(timedelta(hours=9)))
@@ -136,13 +136,15 @@ class RecordingSet:
         return FakeProbe(self.lengths, self.frame_rates)
 
     def run(
-        self, *detectors: LookAheadDetector, started_at: datetime = STARTED_AT
+        self,
+        *detectors: LookAheadDetector | Candidate,
+        started_at: datetime = STARTED_AT,
     ) -> dict:
         """Run the benchmark and return the scorecard it saved.
 
         Parameters
         ----------
-        *detectors : LookAheadDetector
+        *detectors : LookAheadDetector | Candidate
             The detectors to score.
         started_at : datetime
             When the run starts.

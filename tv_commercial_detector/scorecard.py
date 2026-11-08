@@ -16,15 +16,31 @@ Saved as JSON, one file per run::
                         {"value": 1, "based_on": {"commercial_breaks": 12}}, ...},
           "per_recording": {"a.mp4": {...}},
           "errors": {"b.mp4": "comskip not found"}
+        },
+        {
+          "name": "my-candidate",
+          "kind": "candidate",
+          "overall": {"entry_delay_within_limit":
+                        {"value": 0.95, "based_on": {"commercial_breaks": 20}},
+                      ...},
+          "per_recording": {"a.mp4": {...}},
+          "errors": {},
+          "verdicts": {"entry_delay_within_limit": "pass",
+                       "exit_delay_within_limit": "pass",
+                       "missed_commercial_breaks": "fail"},
+          "verdict": "fail"
         }
       ]
     }
 
 A recording a detector failed on appears under ``errors`` instead of
-``per_recording``, and is left out of that detector's overall figures.
+``per_recording``, and is left out of that detector's overall figures. Only
+candidates have ``verdicts`` and a ``verdict``: look-ahead detectors are never
+judged against the pass bar (ADR 0004).
 
 Printed, each detector gets a table with a row per measure and a column for the
-overall figures and for each recording.
+overall figures and for each recording; a candidate's also has a column for its
+verdicts, and its heading gives its overall verdict.
 """
 
 from dataclasses import dataclass, field
@@ -46,13 +62,24 @@ class ScoredRecording:
 
 @dataclass
 class DetectorScorecard:
-    """One detector's measures, overall and per recording, and its errors."""
+    """One detector's measures, overall and per recording, and its errors.
+
+    ``verdicts`` says whether each measure the pass bar covers passes, judged on
+    the overall figures. Only candidates are judged; for a look-ahead detector
+    it is ``None``.
+    """
 
     name: str
     kind: DetectorKind
     overall: dict[str, Measure]
     per_recording: dict[str, dict[str, Measure]] = field(default_factory=dict)
     errors: dict[str, str] = field(default_factory=dict)
+    verdicts: dict[str, bool] | None = None
+
+    @property
+    def passes(self) -> bool | None:
+        """Whether the detector passes every measure, or ``None`` if not judged."""
+        return None if self.verdicts is None else all(self.verdicts.values())
 
 
 @dataclass
@@ -92,20 +119,56 @@ class Scorecard:
                 }
                 for recording in self.recordings
             ],
-            "detectors": [
-                {
-                    "name": detector.name,
-                    "kind": str(detector.kind),
-                    "overall": _measures_json(detector.overall),
-                    "per_recording": {
-                        file_name: _measures_json(measures)
-                        for file_name, measures in detector.per_recording.items()
-                    },
-                    "errors": dict(detector.errors),
-                }
-                for detector in self.detectors
-            ],
+            "detectors": [_detector_json(detector) for detector in self.detectors],
         }
+
+
+def _detector_json(detector: DetectorScorecard) -> dict:
+    """Write one detector's scores as plain JSON values.
+
+    Parameters
+    ----------
+    detector : DetectorScorecard
+        The detector's scores.
+
+    Returns
+    -------
+    dict
+        Its name, kind, measures and errors, and for a candidate its verdicts
+        as ``"pass"`` or ``"fail"``.
+    """
+    scores = {
+        "name": detector.name,
+        "kind": str(detector.kind),
+        "overall": _measures_json(detector.overall),
+        "per_recording": {
+            file_name: _measures_json(measures)
+            for file_name, measures in detector.per_recording.items()
+        },
+        "errors": dict(detector.errors),
+    }
+    if detector.verdicts is not None:
+        scores["verdicts"] = {
+            name: _verdict(passes) for name, passes in detector.verdicts.items()
+        }
+        scores["verdict"] = _verdict(bool(detector.passes))
+    return scores
+
+
+def _verdict(passes: bool) -> str:
+    """Name a verdict.
+
+    Parameters
+    ----------
+    passes : bool
+        Whether it passes.
+
+    Returns
+    -------
+    str
+        ``"pass"`` or ``"fail"``.
+    """
+    return "pass" if passes else "fail"
 
 
 def _measures_json(measures: dict[str, Measure]) -> dict:
@@ -127,7 +190,7 @@ def _measures_json(measures: dict[str, Measure]) -> dict:
     }
 
 
-MEASURE_LABELS = {
+LOOK_AHEAD_MEASURE_LABELS = {
     "missed_commercial_breaks": "Missed commercial breaks",
     "false_flips_per_hour": "False flips per hour",
     "start_offset_median_size": "Start offset, median size",
@@ -137,9 +200,20 @@ MEASURE_LABELS = {
     "end_offset_p95_size": "End offset, 95th percentile size",
     "end_offset_median": "End offset, median",
 }
-"""How the printed table names each measure, in the order it shows them."""
+"""How the printed table names each look-ahead measure, in the order it shows them."""
+
+CANDIDATE_MEASURE_LABELS = {
+    "entry_delay_within_limit": "Entry delay within 5 s",
+    "entry_delay_median": "Entry delay, median",
+    "exit_delay_within_limit": "Exit delay within 5 s",
+    "exit_delay_median": "Exit delay, median",
+    "missed_commercial_breaks": "Missed commercial breaks",
+}
+"""How the printed table names each candidate measure, in the order it shows them."""
 
 _SIGNED = {"start_offset_median", "end_offset_median"}
+
+_SHARES = {"entry_delay_within_limit", "exit_delay_within_limit"}
 
 
 def format_tables(scorecard: Scorecard) -> list[str]:
@@ -154,15 +228,25 @@ def format_tables(scorecard: Scorecard) -> list[str]:
     -------
     list[str]
         The lines of the tables. Each table starts with the detector's name and
-        kind, and its cells are separated by at least two spaces. A recording
+        kind, followed for a candidate by its overall verdict, and its cells
+        are separated by at least two spaces. A candidate's table has a
+        ``Verdict`` column after the overall figures, with ``pass`` or ``fail``
+        for each measure the bar covers and ``-`` for the others. A recording
         the detector failed on shows ``error`` in every row.
     """
     file_names = [recording.file_name for recording in scorecard.recordings]
     lines: list[str] = []
     for detector in scorecard.detectors:
-        rows = [["Measure", "Overall", *file_names]]
-        for name, label in MEASURE_LABELS.items():
+        verdicts = detector.verdicts
+        labels = (
+            LOOK_AHEAD_MEASURE_LABELS if verdicts is None else CANDIDATE_MEASURE_LABELS
+        )
+        verdict_column = [] if verdicts is None else ["Verdict"]
+        rows = [["Measure", "Overall", *verdict_column, *file_names]]
+        for name, label in labels.items():
             row = [label, _cell(name, detector.overall[name])]
+            if verdicts is not None:
+                row.append(_verdict(verdicts[name]) if name in verdicts else "-")
             for file_name in file_names:
                 measures = detector.per_recording.get(file_name)
                 row.append("error" if measures is None else _cell(name, measures[name]))
@@ -170,7 +254,10 @@ def format_tables(scorecard: Scorecard) -> list[str]:
         widths = [max(len(row[i]) for row in rows) for i in range(len(rows[0]))]
         if lines:
             lines.append("")
-        lines.append(f"{detector.name} ({detector.kind})")
+        heading = f"{detector.name} ({detector.kind})"
+        if detector.passes is not None:
+            heading += f": {_verdict(detector.passes)}"
+        lines.append(heading)
         lines.extend(
             "  ".join(cell.ljust(width) for cell, width in zip(row, widths)).rstrip()
             for row in rows
@@ -191,11 +278,15 @@ def _cell(name: str, measure: Measure) -> str:
     Returns
     -------
     str
-        For example ``2 of 12``, ``0.50 in 6.0 h``, ``1.5 s (10)`` or
-        ``-0.3 s (10)``; ``-`` stands for a value there is nothing to measure.
+        For example ``2 of 12``, ``95.0% of 20``, ``0.50 in 6.0 h``,
+        ``1.5 s (10)`` or ``-0.3 s (10)``; ``-`` stands for a value there is
+        nothing to measure.
     """
     if name == "missed_commercial_breaks":
         return f"{measure.value} of {measure.based_on['commercial_breaks']}"
+    if name in _SHARES:
+        value = "-" if measure.value is None else f"{measure.value:.1%}"
+        return f"{value} of {measure.based_on['commercial_breaks']}"
     if name == "false_flips_per_hour":
         value = "-" if measure.value is None else f"{measure.value:.2f}"
         return f"{value} in {measure.based_on['hours']:.1f} h"
