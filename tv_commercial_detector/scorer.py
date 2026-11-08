@@ -438,22 +438,20 @@ def tally_candidate(
         under_way = start <= 0.0
         if not under_way:
             entry_counted += 1
-        if not timeline.ever(
-            State.COMMERCIAL_BREAK, start - LABELING_IMPRECISION_SECONDS, end
-        ):
+        if not timeline.ever(State.COMMERCIAL_BREAK, start, end):
             missed += 1
             continue
         entered = timeline.reached(State.COMMERCIAL_BREAK, start, end)
         if not under_way and entered is not None:
-            entry_delays.append(_milliseconds(max(entered - start, 0.0)))
-        exited = timeline.reached(State.PROGRAM, end, next_start)
-        if exited is not None and exited > length:
-            exited = None
-        if exited is None and _near_end(end, length):
+            entry_delays.append(_delay(entered, start))
+        near_end = _near_end(end, length)
+        exits = timeline.before(length) if near_end else timeline
+        exited = exits.reached(State.PROGRAM, end, next_start)
+        if exited is None and near_end:
             continue
         exit_counted += 1
         if exited is not None:
-            exit_delays.append(_milliseconds(max(exited - end, 0.0)))
+            exit_delays.append(_delay(exited, end))
     return CandidateTally(
         commercial_breaks=counted,
         missed=missed,
@@ -494,6 +492,21 @@ class _Timeline:
             latest[change.reported_at_seconds] = State(change.state)
         return cls(tuple(latest.items()))
 
+    def before(self, time: float) -> _Timeline:
+        """Return the timeline as it stood just before a moment.
+
+        Parameters
+        ----------
+        time : float
+            The moment, in seconds from the start of the recording.
+
+        Returns
+        -------
+        _Timeline
+            The timeline without the changes reported at or after it.
+        """
+        return _Timeline(tuple((at, s) for at, s in self.changes if at < time))
+
     def state_at(self, time: float) -> State:
         """Return the state at a moment.
 
@@ -514,27 +527,34 @@ class _Timeline:
             state = reported
         return state
 
-    def ever(self, state: State, start: float, before: float) -> bool:
-        """Tell whether the state is a given one at any moment in a stretch.
+    def ever(self, state: State, edge: float, before: float) -> bool:
+        """Tell whether the state is a given one at any moment after a labeled edge.
 
         Parameters
         ----------
         state : State
             The state looked for.
-        start : float
-            The stretch's start.
+        edge : float
+            The labeled edge; looking starts ``LABELING_IMPRECISION_SECONDS``
+            before it.
         before : float
-            The stretch's end, exclusive.
+            Where to stop looking, exclusive.
 
         Returns
         -------
         bool
-            ``True`` if the state is the one looked for at some moment in
-            ``[start, before)``.
+            ``True`` if the state is the one looked for at some moment from
+            ``LABELING_IMPRECISION_SECONDS`` before the edge until ``before``.
         """
-        return self.state_at(start) == state or any(
-            start < at < before and reported == state for at, reported in self.changes
-        )
+        state_then = State.UNKNOWN
+        for at, reported in self.changes:
+            if at >= before:
+                break
+            if _offset(at, edge) <= -LABELING_IMPRECISION_SECONDS:
+                state_then = reported
+            elif reported == state:
+                return True
+        return state_then == state
 
     def reached(self, state: State, edge: float, before: float) -> float | None:
         """Return when the state reaches a given one at or after a labeled edge.
@@ -559,15 +579,55 @@ class _Timeline:
         """
         if self.state_at(edge) == state:
             return edge
-        earliest = edge - LABELING_IMPRECISION_SECONDS
         return next(
             (
                 at
                 for at, reported in self.changes
-                if earliest <= at < before and reported == state
+                if _offset(at, edge) >= -LABELING_IMPRECISION_SECONDS
+                and at < before
+                and reported == state
             ),
             None,
         )
+
+
+def _offset(time: float, edge: float) -> float:
+    """Return how far a moment is from a labeled edge, without float noise.
+
+    Parameters
+    ----------
+    time : float
+        The moment, in seconds from the start of the recording.
+    edge : float
+        The labeled edge, in seconds from the start of the recording.
+
+    Returns
+    -------
+    float
+        ``time - edge``, to the microsecond, so float noise can't tip a
+        boundary: 64.4 s - 0.5 s is 63.9 s, not 63.900000000000006 s.
+        Negative is early.
+    """
+    return round(time - edge, 6)
+
+
+def _delay(time: float, edge: float) -> float:
+    """Return the delay from a labeled edge until a moment.
+
+    Parameters
+    ----------
+    time : float
+        The moment the state reached the labeled one.
+    edge : float
+        The labeled edge.
+
+    Returns
+    -------
+    float
+        The delay in seconds, to the microsecond, so 5.0004 s stays over a
+        5 s limit; 0 for a moment before the edge.
+    """
+    return max(_offset(time, edge), 0.0) + 0.0
 
 
 def _near_end(time: float, length: float) -> bool:

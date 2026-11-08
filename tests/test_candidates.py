@@ -616,3 +616,67 @@ def test_measure_with_nothing_to_count_fails(recording_set: RecordingSet) -> Non
         "missed_commercial_breaks": "fail",
     }
     assert scored["verdict"] == "fail"
+
+
+def test_half_a_second_allowance_holds_at_fractional_label_times(
+    recording_set: RecordingSet,
+) -> None:
+    # Labels 64.4 to 180 s. A commercial break reported at 63.9 s, exactly
+    # 0.5 s early, and dropped at 64.0 s is on time: delay 0.
+    recording_set.add("a.mp4", 3600.0, [("00:01:04.4", "00:03:00")])
+    candidate = FakeCandidate(
+        "fake", {"a.mp4": [(CB, 63.9), (PROGRAM, 64.0), (CB, 70.0)]}
+    )
+
+    scorecard = recording_set.run(candidate)
+
+    overall = scorecard["detectors"][0]["overall"]
+    assert overall["entry_delay_median"] == {
+        "value": 0.0,
+        "based_on": {"commercial_breaks": 1},
+    }
+
+
+def test_delay_a_fraction_of_a_millisecond_over_5_s_is_over_the_limit(
+    recording_set: RecordingSet,
+) -> None:
+    recording_set.add("a.mp4", 3600.0, [("00:01:00", "00:03:00")])
+    candidate = FakeCandidate("fake", {"a.mp4": [(CB, 65.0004), (PROGRAM, 180.0)]})
+
+    scorecard = recording_set.run(candidate)
+
+    [scored] = scorecard["detectors"]
+    assert scored["overall"]["entry_delay_within_limit"]["value"] == 0.0
+    assert scored["verdicts"]["entry_delay_within_limit"] == "fail"
+
+
+def test_exit_near_the_end_counts_only_reports_strictly_before_the_end(
+    recording_set: RecordingSet,
+) -> None:
+    # a: 600 s long, labels 500 to 597 s; the program is reported exactly at
+    #    600 s, the end, which isn't before it: no exit delay.
+    # b: 599.95 s long, labeled to 600.0 s, the length rounded up to the next
+    #    tenth. The program reported at 599.0 s, before the end, is an exit
+    #    on time: delay 0.
+    recording_set.add("a.mp4", 600.0, [("00:08:20", "00:09:57")])
+    recording_set.add("b.mp4", 599.95, [("00:08:20", "00:10:00")])
+    candidate = FakeCandidate(
+        "fake",
+        {
+            "a.mp4": [(CB, 500.0), (PROGRAM, 600.0)],
+            "b.mp4": [(CB, 500.0), (PROGRAM, 599.0)],
+        },
+    )
+
+    scorecard = recording_set.run(candidate)
+
+    [scored] = scorecard["detectors"]
+    a, b = scored["per_recording"]["a.mp4"], scored["per_recording"]["b.mp4"]
+    assert a["exit_delay_within_limit"] == {
+        "value": None,
+        "based_on": {"commercial_breaks": 0},
+    }
+    assert b["exit_delay_median"] == {
+        "value": 0.0,
+        "based_on": {"commercial_breaks": 1},
+    }
