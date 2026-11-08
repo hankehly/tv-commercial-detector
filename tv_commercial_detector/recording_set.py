@@ -55,6 +55,20 @@ class ListEntry:
 
 
 @dataclass(frozen=True)
+class LabeledRecording:
+    """A listed recording found in the recordings folder, with a usable label file."""
+
+    path: Path
+    entry: ListEntry
+    label_file: LabelFile
+
+    @property
+    def hours(self) -> float:
+        """The recording's length in hours, from the list of recordings."""
+        return self.entry.length_seconds / 3600
+
+
+@dataclass(frozen=True)
 class Problem:
     """One error or warning, naming what it is about."""
 
@@ -71,7 +85,8 @@ class ValidationReport:
     not being listed, and ``unlabeled_count`` those skipped for having no usable
     label file. ``channels`` and ``commercial_break_count`` cover the
     label files without errors; ``channels_without_logo`` lists those channels
-    with no logo file.
+    with no logo file. ``labeled`` holds the listed recordings found in the
+    recordings folder that have a usable label file, sorted by file name.
     """
 
     errors: list[Problem] = field(default_factory=list)
@@ -83,6 +98,7 @@ class ValidationReport:
     channels: list[str] = field(default_factory=list)
     commercial_break_count: int = 0
     channels_without_logo: list[str] = field(default_factory=list)
+    labeled: list[LabeledRecording] = field(default_factory=list)
 
     @property
     def hours(self) -> float:
@@ -138,7 +154,7 @@ def validate(
         return report
     entries = _unique_entries(rows, report)
 
-    found = {path.name for path in recordings}
+    found = {path.name: path for path in recordings}
     if recordings:
         for name in entries:
             if name not in found:
@@ -183,7 +199,7 @@ def logo_file(data_folder: Path, channel: str) -> Path:
 def _check_labels(
     labels_folder: Path,
     listed: list[ListEntry],
-    found_file_names: set[str],
+    found: dict[str, Path],
     report: ValidationReport,
 ) -> None:
     """Check every label file against the list and summarise the usable ones.
@@ -191,7 +207,8 @@ def _check_labels(
     Only label files without errors count towards the channels and commercial
     breaks in the summary, and neither of two label files for one recording
     counts. A listed recording in the recordings folder without a
-    label file is skipped with a warning.
+    label file is skipped with a warning; one with a usable label file is
+    labeled.
 
     Parameters
     ----------
@@ -199,11 +216,11 @@ def _check_labels(
         The folder holding the label files.
     listed : list[ListEntry]
         Every listed recording.
-    found_file_names : set[str]
-        The file names of the recordings in the recordings folder.
+    found : dict[str, Path]
+        The recordings in the recordings folder, keyed by file name.
     report : ValidationReport
-        Receives any errors and warnings, the channels and the commercial break
-        count.
+        Receives any errors and warnings, the channels, the commercial break
+        count and the labeled recordings.
     """
     by_fingerprint = {entry.fingerprint: entry for entry in listed}
     first_file_by_fingerprint: dict[str, str] = {}
@@ -240,8 +257,14 @@ def _check_labels(
         len(label_file.commercial_breaks) for label_file in usable.values()
     )
 
-    for entry in listed:
-        if entry.file_name in found_file_names and entry.fingerprint not in usable:
+    for entry in sorted(listed, key=lambda e: e.file_name):
+        path = found.get(entry.file_name)
+        if path is None:
+            continue
+        label_file = usable.get(entry.fingerprint)
+        if label_file is not None:
+            report.labeled.append(LabeledRecording(path, entry, label_file))
+        else:
             report.unlabeled_count += 1
             report.warnings.append(
                 Problem(
