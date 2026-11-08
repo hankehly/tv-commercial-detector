@@ -47,7 +47,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 
 from tv_commercial_detector.detectors import DetectorKind
-from tv_commercial_detector.scorer import Measure
+from tv_commercial_detector.scorer import DELAY_LIMIT_SECONDS, Measure
 
 
 @dataclass(frozen=True)
@@ -200,16 +200,20 @@ LOOK_AHEAD_MEASURE_LABELS = {
     "end_offset_p95_size": "End offset, 95th percentile size",
     "end_offset_median": "End offset, median",
 }
-"""How the printed table names each look-ahead measure, in the order it shows them."""
 
 CANDIDATE_MEASURE_LABELS = {
-    "entry_delay_within_limit": "Entry delay within 5 s",
+    "entry_delay_within_limit": f"Entry delay within {DELAY_LIMIT_SECONDS:g} s",
     "entry_delay_median": "Entry delay, median",
-    "exit_delay_within_limit": "Exit delay within 5 s",
+    "exit_delay_within_limit": f"Exit delay within {DELAY_LIMIT_SECONDS:g} s",
     "exit_delay_median": "Exit delay, median",
     "missed_commercial_breaks": "Missed commercial breaks",
 }
-"""How the printed table names each candidate measure, in the order it shows them."""
+
+MEASURE_LABELS = {
+    DetectorKind.LOOK_AHEAD: LOOK_AHEAD_MEASURE_LABELS,
+    DetectorKind.CANDIDATE: CANDIDATE_MEASURE_LABELS,
+}
+"""How the printed table names each kind's measures, in the order it shows them."""
 
 _SIGNED = {"start_offset_median", "end_offset_median"}
 
@@ -238,9 +242,7 @@ def format_tables(scorecard: Scorecard) -> list[str]:
     lines: list[str] = []
     for detector in scorecard.detectors:
         verdicts = detector.verdicts
-        labels = (
-            LOOK_AHEAD_MEASURE_LABELS if verdicts is None else CANDIDATE_MEASURE_LABELS
-        )
+        labels = MEASURE_LABELS[detector.kind]
         verdict_column = [] if verdicts is None else ["Verdict"]
         rows = [["Measure", "Overall", *verdict_column, *file_names]]
         for name, label in labels.items():

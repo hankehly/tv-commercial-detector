@@ -30,7 +30,9 @@ Entry delay                From the labeled start until the state is first
                            ``COMMERCIAL_BREAK``; 0 if it already is.
 Missed commercial break    The state is never ``COMMERCIAL_BREAK`` from 0.5 s
                            before the labeled start until the labeled end. It
-                           counts as an entry delay over 5 s.
+                           counts as an entry delay over 5 s, and so does one
+                           whose only ``COMMERCIAL_BREAK`` in that stretch was
+                           dropped before the labeled start.
 Exit delay                 For each commercial break not missed, from the
                            labeled end until the state is first ``PROGRAM``;
                            over 5 s if the next labeled one starts first.
@@ -55,7 +57,9 @@ Exit delay                  At most 5 s for at least 95% of the commercial
 Missed commercial breaks    At most 2% of labeled commercial breaks.
 ==========================  ===================================================
 
-A candidate passes overall only if it passes every measure.
+A measure with nothing to count, for example when the candidate failed on
+every recording, fails. A candidate passes overall only if it passes every
+measure.
 
 Figures for several recordings pool every commercial break and hour across them;
 they aren't averages of per-recording figures.
@@ -358,18 +362,18 @@ class CandidateTally:
             limit and the median of the delays that could be measured, in
             seconds; and the number of missed commercial breaks.
         """
-        entry = {"commercial_breaks": self.entry_counted}
-        exit_ = {"commercial_breaks": self.exit_counted}
         return {
             "entry_delay_within_limit": Measure(
-                _share(self.entry_within_limit, self.entry_counted), entry
+                _share(self.entry_within_limit, self.entry_counted),
+                {"commercial_breaks": self.entry_counted},
             ),
             "entry_delay_median": Measure(
                 _median(self.entry_delays),
                 {"commercial_breaks": len(self.entry_delays)},
             ),
             "exit_delay_within_limit": Measure(
-                _share(self.exit_within_limit, self.exit_counted), exit_
+                _share(self.exit_within_limit, self.exit_counted),
+                {"commercial_breaks": self.exit_counted},
             ),
             "exit_delay_median": Measure(
                 _median(self.exit_delays),
@@ -383,8 +387,8 @@ class CandidateTally:
     def verdicts(self) -> dict[str, bool]:
         """Judge the tally against the pass bar.
 
-        A value exactly on a limit is within it. With nothing to count, a
-        measure passes.
+        A value exactly on a limit is within it. A measure with nothing to
+        count fails, since nothing shows the candidate is good enough.
 
         Returns
         -------
@@ -392,12 +396,13 @@ class CandidateTally:
             Whether each measure the bar covers passes, by measure name.
         """
         return {
-            "entry_delay_within_limit": self.entry_within_limit * 100
+            "entry_delay_within_limit": self.entry_counted > 0
+            and self.entry_within_limit * 100
             >= DELAY_SHARE_PERCENT * self.entry_counted,
-            "exit_delay_within_limit": self.exit_within_limit * 100
-            >= DELAY_SHARE_PERCENT * self.exit_counted,
-            "missed_commercial_breaks": self.missed * 100
-            <= MISSED_PERCENT * self.commercial_breaks,
+            "exit_delay_within_limit": self.exit_counted > 0
+            and self.exit_within_limit * 100 >= DELAY_SHARE_PERCENT * self.exit_counted,
+            "missed_commercial_breaks": self.commercial_breaks > 0
+            and self.missed * 100 <= MISSED_PERCENT * self.commercial_breaks,
         }
 
 
@@ -424,26 +429,24 @@ def tally_candidate(
     counted = missed = entry_counted = exit_counted = 0
     entry_delays: list[float] = []
     exit_delays: list[float] = []
-    next_starts = [b.start_seconds for b in labeled[1:]] + [math.inf]
-    for labeled_break, next_start in zip(labeled, next_starts, strict=True):
+    next_starts = [later.start_seconds for later in labeled[1:]] + [math.inf]
+    for labeled_break, next_start in zip(labeled, next_starts):
         start, end = labeled_break.start_seconds, labeled_break.end_seconds
         if _near_end(start, length):
             continue
         counted += 1
-        entered = timeline.first(
-            State.COMMERCIAL_BREAK, start - LABELING_IMPRECISION_SECONDS, end
-        )
         under_way = start <= 0.0
         if not under_way:
             entry_counted += 1
-        if entered is None:
+        if not timeline.ever(
+            State.COMMERCIAL_BREAK, start - LABELING_IMPRECISION_SECONDS, end
+        ):
             missed += 1
             continue
-        if not under_way:
+        entered = timeline.reached(State.COMMERCIAL_BREAK, start, end)
+        if not under_way and entered is not None:
             entry_delays.append(_milliseconds(max(entered - start, 0.0)))
-        exited = timeline.first(
-            State.PROGRAM, end - LABELING_IMPRECISION_SECONDS, next_start
-        )
+        exited = timeline.reached(State.PROGRAM, end, next_start)
         if exited is not None and exited > length:
             exited = None
         if exited is None and _near_end(end, length):
@@ -511,32 +514,57 @@ class _Timeline:
             state = reported
         return state
 
-    def first(self, state: State, start: float, before: float) -> float | None:
-        """Return when the state is first a given one, from a moment until another.
+    def ever(self, state: State, start: float, before: float) -> bool:
+        """Tell whether the state is a given one at any moment in a stretch.
 
         Parameters
         ----------
         state : State
             The state looked for.
         start : float
-            Where to start looking; the answer is ``start`` itself if the
-            state is already the one looked for.
+            The stretch's start.
+        before : float
+            The stretch's end, exclusive.
+
+        Returns
+        -------
+        bool
+            ``True`` if the state is the one looked for at some moment in
+            ``[start, before)``.
+        """
+        return self.state_at(start) == state or any(
+            start < at < before and reported == state for at, reported in self.changes
+        )
+
+    def reached(self, state: State, edge: float, before: float) -> float | None:
+        """Return when the state reaches a given one at or after a labeled edge.
+
+        Parameters
+        ----------
+        state : State
+            The state the labels change to at the edge.
+        edge : float
+            The labeled edge.
         before : float
             Where to stop looking, exclusive.
 
         Returns
         -------
         float | None
-            The first moment in ``[start, before)`` at which the state is the
-            one looked for, or ``None`` if there is none.
+            ``edge`` itself if the state is already the one looked for there.
+            Otherwise the first change to it from ``LABELING_IMPRECISION_SECONDS``
+            before the edge until ``before``, so a change that early counts as
+            on time; a state reached long before the edge and dropped just
+            before it doesn't. ``None`` if there is no such change.
         """
-        if self.state_at(start) == state:
-            return start
+        if self.state_at(edge) == state:
+            return edge
+        earliest = edge - LABELING_IMPRECISION_SECONDS
         return next(
             (
                 at
                 for at, reported in self.changes
-                if start < at < before and reported == state
+                if earliest <= at < before and reported == state
             ),
             None,
         )

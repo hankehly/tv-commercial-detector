@@ -67,8 +67,8 @@ def test_a_change_up_to_half_a_second_before_a_labeled_start_is_on_time(
 ) -> None:
     # 60 to 180: a commercial break reported 0.5 s early, even briefly, counts
     # as entered on time, delay 0. 300 to 400: one reported 1 s early and
-    # dropped 0.6 s before the labeled start is too early, so the break is
-    # missed.
+    # dropped 0.6 s before the labeled start is too early, so the commercial
+    # break is missed.
     recording_set.add(
         "a.mp4", 3600.0, [("00:01:00", "00:03:00"), ("00:05:00", "00:06:40")]
     )
@@ -524,3 +524,95 @@ def test_run_command_prints_candidates_with_pass_or_fail_and_look_ahead_without(
     }
     tool_table = lines[lines.index("tool (look-ahead)") + 1 : lines.index("")]
     assert tool_table[0].split() == ["Measure", "Overall", "a.mp4", "b.mp4"]
+
+
+def test_already_in_a_commercial_break_at_the_labeled_start_is_delay_0(
+    recording_set: RecordingSet,
+) -> None:
+    # Labels 300 to 400 s and 600 to 700 s. The first is entered at 200 s,
+    # well before its start, and the state is still a commercial break at
+    # 300 s: delay 0. Before the second, the candidate is in a commercial break
+    # from 500 s but drops to UNKNOWN at 599.8 s, so at the labeled start it
+    # isn't; it only reports a commercial break again at 607 s: delay 7 s, even
+    # though the state 0.5 s before the start was a commercial break.
+    recording_set.add(
+        "a.mp4", 3600.0, [("00:05:00", "00:06:40"), ("00:10:00", "00:11:40")]
+    )
+    candidate = FakeCandidate(
+        "fake",
+        {
+            "a.mp4": [
+                (CB, 200.0),
+                (PROGRAM, 400.0),
+                (CB, 500.0),
+                (UNKNOWN, 599.8),
+                (CB, 607.0),
+                (PROGRAM, 700.0),
+            ]
+        },
+    )
+
+    scorecard = recording_set.run(candidate)
+
+    overall = scorecard["detectors"][0]["overall"]
+    assert overall["entry_delay_within_limit"]["value"] == 0.5
+    assert overall["entry_delay_median"] == {
+        "value": 3.5,
+        "based_on": {"commercial_breaks": 2},
+    }
+
+
+def test_program_before_the_labeled_end_that_is_dropped_by_the_end_is_not_an_exit(
+    recording_set: RecordingSet,
+) -> None:
+    # Labels 60 to 180 s. The candidate reports the program early, at 170 s,
+    # drops to UNKNOWN at 179.8 s, and reports the program again at 188 s:
+    # exit delay 8 s.
+    recording_set.add("a.mp4", 3600.0, [("00:01:00", "00:03:00")])
+    candidate = FakeCandidate(
+        "fake",
+        {"a.mp4": [(CB, 60.0), (PROGRAM, 170.0), (UNKNOWN, 179.8), (PROGRAM, 188.0)]},
+    )
+
+    scorecard = recording_set.run(candidate)
+
+    overall = scorecard["detectors"][0]["overall"]
+    assert overall["exit_delay_median"]["value"] == 8.0
+    assert overall["exit_delay_within_limit"]["value"] == 0.0
+
+
+def test_recording_without_commercial_breaks_is_scored(
+    recording_set: RecordingSet,
+) -> None:
+    recording_set.add("a.mp4", 3600.0, [("00:01:00", "00:03:00")])
+    recording_set.add("b.mp4", 3600.0, [])
+    candidate = FakeCandidate(
+        "fake",
+        {"a.mp4": [(CB, 60.0), (PROGRAM, 180.0)], "b.mp4": [(PROGRAM, 1.0)]},
+    )
+
+    scorecard = recording_set.run(candidate)
+
+    [scored] = scorecard["detectors"]
+    assert scored["per_recording"]["b.mp4"]["missed_commercial_breaks"] == {
+        "value": 0,
+        "based_on": {"commercial_breaks": 0},
+    }
+    assert scored["verdict"] == "pass"
+
+
+def test_measure_with_nothing_to_count_fails(recording_set: RecordingSet) -> None:
+    # The candidate fails on the only recording, so nothing is measured, and
+    # nothing shows it is good enough for live use.
+    recording_set.add("a.mp4", 3600.0, [("00:01:00", "00:03:00")])
+    candidate = FakeCandidate("fake", {"a.mp4": "model file not found"})
+
+    scorecard = recording_set.run(candidate)
+
+    [scored] = scorecard["detectors"]
+    assert scored["verdicts"] == {
+        "entry_delay_within_limit": "fail",
+        "exit_delay_within_limit": "fail",
+        "missed_commercial_breaks": "fail",
+    }
+    assert scored["verdict"] == "fail"
