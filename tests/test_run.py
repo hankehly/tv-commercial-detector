@@ -487,6 +487,27 @@ def test_report_with_a_commercial_break_that_does_not_end_after_it_starts_is_an_
     }
 
 
+@pytest.mark.parametrize("bad_time", [None, "60", float("nan"), True])
+def test_report_with_a_time_that_is_not_a_finite_number_is_an_error(
+    recording_set: RecordingSet, bad_time: object
+) -> None:
+    recording_set.add("a.mp4", 3600.0, [("00:01:00", "00:03:00")])
+    recording_set.add("b.mp4", 3600.0, [("00:01:00", "00:03:00")])
+    detector = FakeDetector(
+        "sloppy",
+        {"a.mp4": [(bad_time, 180.0)], "b.mp4": [(60.0, 180.0)]},  # ty: ignore[invalid-argument-type]
+    )
+
+    scorecard = recording_set.run(detector)
+
+    [scored] = scorecard["detectors"]
+    assert scored["errors"] == {
+        "a.mp4": f"reported commercial break {bad_time} to 180.0 s has a time "
+        "that isn't a finite number"
+    }
+    assert list(scored["per_recording"]) == ["b.mp4"]
+
+
 def test_each_run_saves_its_scorecard_in_a_new_folder_named_after_its_start(
     recording_set: RecordingSet,
 ) -> None:

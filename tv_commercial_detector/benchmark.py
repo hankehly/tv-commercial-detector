@@ -173,20 +173,44 @@ def _check_report(report: LookAheadReport) -> None:
     Raises
     ------
     DetectorError
-        If a commercial break has a time that isn't a finite number or doesn't
-        end after it starts.
+        If a commercial break has a time that isn't a finite number, such as
+        ``None``, text, ``True`` or NaN, or doesn't end after it starts.
     """
     for reported in report.commercial_breaks:
         span = f"{reported.start_seconds} to {reported.end_seconds} s"
         if not (
-            math.isfinite(reported.start_seconds)
-            and math.isfinite(reported.end_seconds)
+            _is_finite_number(reported.start_seconds)
+            and _is_finite_number(reported.end_seconds)
         ):
-            raise DetectorError(f"reported commercial break {span} isn't finite")
+            raise DetectorError(
+                f"reported commercial break {span} has a time that isn't a "
+                "finite number"
+            )
         if reported.end_seconds <= reported.start_seconds:
             raise DetectorError(
                 f"reported commercial break {span} doesn't end after it starts"
             )
+
+
+def _is_finite_number(value: object) -> bool:
+    """Tell whether a reported time is a finite number of seconds.
+
+    Parameters
+    ----------
+    value : object
+        The time, as the detector gave it; detectors parse tool output, so it
+        may not be the number the report's type promises.
+
+    Returns
+    -------
+    bool
+        ``True`` for a finite ``int`` or ``float`` that isn't a ``bool``.
+    """
+    return (
+        isinstance(value, int | float)
+        and not isinstance(value, bool)
+        and math.isfinite(value)
+    )
 
 
 def _for_detector(recording: LabeledRecording) -> Recording:
