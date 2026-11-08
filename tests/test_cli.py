@@ -8,7 +8,14 @@ import pytest
 from tv_commercial_detector import cli, settings
 from tv_commercial_detector.cli import main
 from tv_commercial_detector.media_probe import ProbeResult
-from tv_commercial_detector.settings import DATA_FOLDER_VARIABLE, data_folder
+from tv_commercial_detector.settings import (
+    COMSKIP_COMMAND_VARIABLE,
+    DATA_FOLDER_VARIABLE,
+    JOIN_LOGO_SCP_COMMAND_VARIABLE,
+    comskip_command,
+    data_folder,
+    join_logo_scp_command,
+)
 
 
 def test_data_folder_defaults_to_data_at_the_repository_root(
@@ -20,6 +27,41 @@ def test_data_folder_defaults_to_data_at_the_repository_root(
 
     assert folder.name == "data"
     assert (folder.parent / "pyproject.toml").is_file()
+
+
+@pytest.mark.parametrize("value", [None, ""])
+def test_tool_commands_default_to_comskip_and_jlse_on_the_path(
+    monkeypatch: pytest.MonkeyPatch, value: str | None
+) -> None:
+    for variable in (COMSKIP_COMMAND_VARIABLE, JOIN_LOGO_SCP_COMMAND_VARIABLE):
+        if value is None:
+            monkeypatch.delenv(variable, raising=False)
+        else:
+            monkeypatch.setenv(variable, value)
+
+    assert comskip_command() == ["comskip"]
+    assert join_logo_scp_command() == ["jlse"]
+
+
+def test_tool_commands_are_read_from_their_settings_as_shell_words(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(COMSKIP_COMMAND_VARIABLE, "/opt/comskip/bin/comskip")
+    monkeypatch.setenv(
+        JOIN_LOGO_SCP_COMMAND_VARIABLE,
+        "docker run --rm -v '/Volumes/TV Drive:/data' jlse-image jlse",
+    )
+
+    assert comskip_command() == ["/opt/comskip/bin/comskip"]
+    assert join_logo_scp_command() == [
+        "docker",
+        "run",
+        "--rm",
+        "-v",
+        "/Volumes/TV Drive:/data",
+        "jlse-image",
+        "jlse",
+    ]
 
 
 def test_validate_checks_the_data_folder_named_by_the_setting(

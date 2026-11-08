@@ -56,11 +56,16 @@ class ListEntry:
 
 @dataclass(frozen=True)
 class LabeledRecording:
-    """A listed recording found in the recordings folder, with a usable label file."""
+    """A listed recording found in the recordings folder, with a usable label file.
+
+    ``frame_rate`` is its video's frames per second as the media probe
+    reported it, or ``None`` when the probe couldn't tell.
+    """
 
     path: Path
     entry: ListEntry
     label_file: LabelFile
+    frame_rate: float | None = None
 
     @property
     def hours(self) -> float:
@@ -162,14 +167,15 @@ def validate(
                     Problem(name, "listed but missing from the recordings folder")
                 )
 
+    frame_rates: dict[str, float | None] = {}
     for path in recordings:
         entry = entries.get(path.name)
         if entry is None:
             _warn_unlisted(path, entries, probe, report)
         else:
-            _check_listed(path, entry, probe, report)
+            frame_rates[path.name] = _check_listed(path, entry, probe, report)
 
-    _check_labels(labels_folder, list(entries.values()), found, report)
+    _check_labels(labels_folder, list(entries.values()), found, frame_rates, report)
     report.channels_without_logo = [
         channel
         for channel in report.channels
@@ -200,6 +206,7 @@ def _check_labels(
     labels_folder: Path,
     listed: list[ListEntry],
     found: dict[str, Path],
+    frame_rates: dict[str, float | None],
     report: ValidationReport,
 ) -> None:
     """Check every label file against the list and summarise the usable ones.
@@ -218,6 +225,9 @@ def _check_labels(
         Every listed recording.
     found : dict[str, Path]
         The recordings in the recordings folder, keyed by file name.
+    frame_rates : dict[str, float | None]
+        The probed frame rate of each listed recording in the recordings
+        folder, keyed by file name.
     report : ValidationReport
         Receives any errors and warnings, the channels, the commercial break
         count and the labeled recordings.
@@ -263,7 +273,11 @@ def _check_labels(
             continue
         label_file = usable.get(entry.fingerprint)
         if label_file is not None:
-            report.labeled.append(LabeledRecording(path, entry, label_file))
+            report.labeled.append(
+                LabeledRecording(
+                    path, entry, label_file, frame_rates.get(entry.file_name)
+                )
+            )
         else:
             report.unlabeled_count += 1
             report.warnings.append(
@@ -320,7 +334,7 @@ def _unique_entries(
 
 def _check_listed(
     path: Path, entry: ListEntry, probe: MediaProbe, report: ValidationReport
-) -> None:
+) -> float | None:
     """Check a listed recording's size and tracks, and count it in the summary.
 
     Parameters
@@ -333,6 +347,12 @@ def _check_listed(
         Reports the recording's tracks and length.
     report : ValidationReport
         Receives any errors and the recording's length.
+
+    Returns
+    -------
+    float | None
+        The recording's frame rate, as the media probe reported it, or
+        ``None`` if the probe failed or couldn't tell.
     """
     report.recording_count += 1
     report.total_length_seconds += entry.length_seconds
@@ -348,7 +368,7 @@ def _check_listed(
 
     result = _probe(path, probe, report)
     if result is None:
-        return
+        return None
     if not result.has_video:
         report.errors.append(Problem(path.name, "no video track"))
     if not result.has_audio:
@@ -361,6 +381,7 @@ def _check_listed(
                 f"media probe says {result.length_seconds:.3f} s",
             )
         )
+    return result.frame_rate
 
 
 def _warn_unlisted(

@@ -1,9 +1,11 @@
 """Fixtures shared by the tests."""
 
 from collections.abc import Iterator
+from pathlib import Path
 
 import pytest
 from loguru import logger
+from recording_sets import RecordingSet
 
 
 @pytest.fixture
@@ -15,3 +17,9 @@ def log() -> Iterator[list[str]]:
     )
     yield lines
     logger.remove(sink)
+
+
+@pytest.fixture
+def recording_set(tmp_path: Path) -> RecordingSet:
+    """Return an empty recording set in a temporary folder."""
+    return RecordingSet(tmp_path)
