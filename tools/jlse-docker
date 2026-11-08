@@ -1,0 +1,80 @@
+#!/usr/bin/env bash
+# Run join_logo_scp's whole pipeline on one recording, in Docker.
+#
+# Usage: jlse-docker RECORDING LOGO
+#
+# Runs jlse from the JoinLogoScpTrialSetLinux setup: chapter_exe finds silences
+# and scene changes, logoframe finds when the logo is on screen, and
+# join_logo_scp decides the cuts, all with their default command script and
+# settings. RECORDING is a video file, such as an MP4 file, and LOGO the
+# channel's logo file (.lgd). jlse's results are written to the current folder;
+# obs_cut.avs lists the frames it keeps.
+#
+# Exits with an error naming the step if any step wrote no output. jlse runs
+# each step even when the one before it failed, and join_logo_scp then writes a
+# cut list without the missing information, so jlse's own exit code can't be
+# trusted.
+#
+# Build its image first: see docs/installing-comskip-and-join-logo-scp.md.
+set -euo pipefail
+
+image=tv-commercial-detector/join_logo_scp
+# Each step and the output it writes, in the order jlse runs them.
+outputs=(
+  chapter_exe:obs_chapterexe.txt
+  logoframe:obs_logoframe.txt
+  join_logo_scp:obs_jlscp.txt
+  join_logo_scp:obs_cut.avs
+)
+
+fail() {
+  echo "jlse-docker: $1" >&2
+  exit 1
+}
+
+absolute_path() {
+  printf '%s/%s\n' "$(cd "$(dirname "$1")" && pwd)" "$(basename "$1")"
+}
+
+if [[ $# -ne 2 ]]; then
+  echo "usage: jlse-docker RECORDING LOGO" >&2
+  exit 2
+fi
+[[ -f $1 ]] || fail "no such recording: $1"
+[[ -f $2 ]] || fail "no such logo file: $2"
+[[ $2 == *.lgd ]] || fail "the logo file must be a .lgd file: $2"
+recording=$(absolute_path "$1")
+logo=$(absolute_path "$2")
+
+# Stop with Docker's own reason if Docker isn't running or the image isn't built.
+if ! reason=$(docker image inspect "$image" 2>&1 >/dev/null); then
+  fail "can't use the $image image: ${reason%%$'\n'*}"
+fi
+
+# jlse accepts only files named .ts, and picks its settings and logo from a
+# channel name in the file name. Inside the container the recording is always
+# recording.ts and the logo the only file in jlse's logo folder, so jlse uses
+# its default settings and this logo whatever the files are called. Its video
+# reader recognizes an MP4 file by its content, not its name.
+for output in "${outputs[@]}"; do
+  file=${output#*:}
+  rm -f "$file"
+done
+status=0
+docker run --rm --init --platform linux/amd64 --pull never --network none \
+  --volume "$recording:/input/recording.ts:ro" \
+  --volume "$logo:/join_logo_scp_trial/logo/logo.lgd:ro" \
+  --volume "$PWD:/join_logo_scp_trial/result/recording" \
+  "$image" /input/recording.ts || status=$?
+
+# 125 to 127 mean Docker couldn't start jlse at all, for example because it
+# couldn't share a file with the container. Docker's message says why.
+if [[ $status -ge 125 && $status -le 127 ]]; then
+  exit "$status"
+fi
+for output in "${outputs[@]}"; do
+  step=${output%%:*}
+  file=${output#*:}
+  [[ -f $file ]] || fail "$step wrote no $file; see jlse's messages"
+done
+[[ $status == 0 ]] || fail "jlse exited with code $status; see its messages"
