@@ -654,7 +654,7 @@ def _within_limit(delays: Sequence[float]) -> int:
     Parameters
     ----------
     delays : Sequence[float]
-        The delays, in seconds, rounded to the millisecond.
+        The delays, in seconds, rounded to the microsecond.
 
     Returns
     -------
