@@ -48,7 +48,7 @@ join_logo_scp is three programs run in turn by a script called jlse, which comes
 | `tools/comskip-docker` | The same arguments as `comskip` | What Comskip would write if it were installed here: `<recording>.txt` and any other output files, in the folder given by `--output=`, or else next to the recording |
 | `tools/jlse-docker` | A recording and its channel's logo file: `jlse-docker RECORDING LOGO` | jlse's results, in the current folder. `obs_cut.avs` lists the frames join_logo_scp keeps, and `obs_logoframe.txt` when the logo was on screen |
 
-- **comskip-docker** shows Comskip the current folder, and the folder of every file named in its arguments, at the same paths they have on the Mac. So anything that works with Comskip installed here works with `comskip-docker`.
+- **comskip-docker** shows Comskip the current folder, and the folder of every file named in its arguments, at the same paths they have on the Mac. If a file is a symbolic link, it also shows the folder of each file the link leads to. So anything that works with Comskip installed here works with `comskip-docker`, with one exception: a relative link that climbs out, with `..`, of the linked folder it sits in.
 - **jlse-docker** runs all three programs with their default settings. It exits with an error naming the program if any of them wrote no output.
 - Both run their tool without network access, and remove the container when it finishes. If Docker Desktop isn't running, or an image isn't built, both stop straight away and say so.
 
