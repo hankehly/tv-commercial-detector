@@ -2,16 +2,21 @@
 
 import json
 import math
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from typing import cast
 
 from tv_commercial_detector.detectors import (
+    Candidate,
+    CandidateReport,
     DetectorError,
+    DetectorKind,
     LookAheadDetector,
     LookAheadReport,
     Recording,
+    State,
 )
 from tv_commercial_detector.media_probe import MediaProbe
 from tv_commercial_detector.recording_set import (
@@ -24,7 +29,13 @@ from tv_commercial_detector.scorecard import (
     Scorecard,
     ScoredRecording,
 )
-from tv_commercial_detector.scorer import LookAheadTally, tally_look_ahead
+from tv_commercial_detector.scorer import (
+    CandidateTally,
+    LookAheadTally,
+    Measure,
+    tally_candidate,
+    tally_look_ahead,
+)
 
 SCORECARD_FILE_NAME = "scorecard.json"
 
@@ -50,7 +61,7 @@ def run(
     recording_list: Path,
     labels_folder: Path,
     probe: MediaProbe,
-    detectors: Sequence[LookAheadDetector],
+    detectors: Sequence[LookAheadDetector | Candidate],
     started_at: datetime,
 ) -> RunResult:
     """Validate the recording set, score each detector on it and save the scorecard.
@@ -67,8 +78,8 @@ def run(
         The folder holding the label files.
     probe : MediaProbe
         Reports each recording's tracks and length.
-    detectors : Sequence[LookAheadDetector]
-        The detectors to score.
+    detectors : Sequence[LookAheadDetector | Candidate]
+        The detectors to score, of either kind.
     started_at : datetime
         When the run started; it names the run's folder.
 
@@ -121,16 +132,17 @@ def _new_run_folder(runs_folder: Path, started_at: datetime) -> Path:
 
 
 def _score(
-    detector: LookAheadDetector, recordings: list[LabeledRecording]
+    detector: LookAheadDetector | Candidate, recordings: list[LabeledRecording]
 ) -> DetectorScorecard:
-    """Run a look-ahead detector on every labeled recording and score it.
+    """Score a detector of either kind on every labeled recording.
 
-    A recording the detector fails on, or reports nonsense for, is recorded as
-    an error and left out of the detector's measures.
+    A look-ahead detector analyzes each recording; a candidate gets one full
+    run over each. A recording the detector fails on, or reports nonsense for,
+    is recorded as an error and left out of the detector's measures.
 
     Parameters
     ----------
-    detector : LookAheadDetector
+    detector : LookAheadDetector | Candidate
         The detector.
     recordings : list[LabeledRecording]
         The labeled recordings.
@@ -138,31 +150,168 @@ def _score(
     Returns
     -------
     DetectorScorecard
-        The detector's measures, overall and per recording, and its errors.
+        The detector's measures, overall and per recording, its errors and,
+        for a candidate, its verdicts on the overall figures.
     """
-    overall = LookAheadTally()
-    per_recording = {}
-    errors = {}
-    for recording in recordings:
-        try:
-            report = detector.analyze(_for_detector(recording))
-            _check_report(report)
-        except DetectorError as e:
-            errors[recording.path.name] = str(e)
-            continue
-        tally = tally_look_ahead(recording, report)
-        overall += tally
-        per_recording[recording.path.name] = tally.measures()
+    if detector.kind == DetectorKind.CANDIDATE:
+        candidate = cast(Candidate, detector)
+        overall, per_recording, errors = _tally_each(
+            recordings, lambda r: _tally_full_run(candidate, r), CandidateTally()
+        )
+        verdicts = overall.verdicts()
+    else:
+        look_ahead = cast(LookAheadDetector, detector)
+        overall, per_recording, errors = _tally_each(
+            recordings, lambda r: _tally_analysis(look_ahead, r), LookAheadTally()
+        )
+        verdicts = None
     return DetectorScorecard(
         name=detector.name,
         kind=detector.kind,
         overall=overall.measures(),
         per_recording=per_recording,
         errors=errors,
+        verdicts=verdicts,
     )
 
 
-def _check_report(report: LookAheadReport) -> None:
+def _tally_each[T: (CandidateTally, LookAheadTally)](
+    recordings: list[LabeledRecording],
+    tally_one: Callable[[LabeledRecording], T],
+    empty: T,
+) -> tuple[T, dict[str, dict[str, Measure]], dict[str, str]]:
+    """Tally a detector on every recording, pooling what it could be scored on.
+
+    Parameters
+    ----------
+    recordings : list[LabeledRecording]
+        The labeled recordings.
+    tally_one : Callable[[LabeledRecording], T]
+        Runs the detector on one recording and tallies its report; raises
+        ``DetectorError`` if the detector fails on it or reports nonsense.
+    empty : T
+        The tally of no recordings, to pool from.
+
+    Returns
+    -------
+    tuple[T, dict[str, dict[str, Measure]], dict[str, str]]
+        The pooled tally, the measures per recording, and the error per
+        recording the detector failed on, both by file name.
+    """
+    overall = empty
+    per_recording = {}
+    errors = {}
+    for recording in recordings:
+        try:
+            tally = tally_one(recording)
+        except DetectorError as e:
+            errors[recording.path.name] = str(e)
+            continue
+        overall += tally
+        per_recording[recording.path.name] = tally.measures()
+    return overall, per_recording, errors
+
+
+def _tally_full_run(
+    candidate: Candidate, recording: LabeledRecording
+) -> CandidateTally:
+    """Give a candidate a full run over a recording and tally its report.
+
+    Parameters
+    ----------
+    candidate : Candidate
+        The candidate.
+    recording : LabeledRecording
+        The labeled recording.
+
+    Returns
+    -------
+    CandidateTally
+        The counts behind the recording's measures.
+
+    Raises
+    ------
+    DetectorError
+        If the candidate fails on the recording or reports nonsense.
+    """
+    length = recording.entry.length_seconds
+    report = candidate.run(_for_detector(recording), 0.0, length)
+    _check_candidate_report(report, start_seconds=0.0)
+    return tally_candidate(recording, report)
+
+
+def _tally_analysis(
+    detector: LookAheadDetector, recording: LabeledRecording
+) -> LookAheadTally:
+    """Have a look-ahead detector analyze a recording and tally its report.
+
+    Parameters
+    ----------
+    detector : LookAheadDetector
+        The detector.
+    recording : LabeledRecording
+        The labeled recording.
+
+    Returns
+    -------
+    LookAheadTally
+        The counts behind the recording's measures.
+
+    Raises
+    ------
+    DetectorError
+        If the detector fails on the recording or reports nonsense.
+    """
+    report = detector.analyze(_for_detector(recording))
+    _check_look_ahead_report(report)
+    return tally_look_ahead(recording, report)
+
+
+def _check_candidate_report(report: CandidateReport, start_seconds: float) -> None:
+    """Check that a candidate's report can be scored.
+
+    Parameters
+    ----------
+    report : CandidateReport
+        The report.
+    start_seconds : float
+        Where the run started; no change can be reported before it.
+
+    Raises
+    ------
+    DetectorError
+        If a change has a state that isn't one of the three, or a time that
+        isn't a finite number, comes before the run's start or comes before the
+        change before it; or if the processing time isn't a finite number of
+        seconds, 0 or more.
+    """
+    previous = start_seconds
+    for number, change in enumerate(report.changes, start=1):
+        at = change.reported_at_seconds
+        described = f"state change {number} ({change.state} at {at} s)"
+        if change.state not in list(State):
+            raise DetectorError(
+                f"{described} has a state that isn't COMMERCIAL_BREAK, PROGRAM "
+                "or UNKNOWN"
+            )
+        if not _is_finite_number(at):
+            raise DetectorError(f"{described} has a time that isn't a finite number")
+        if at < start_seconds:
+            raise DetectorError(
+                f"{described} is reported before the run's start at {start_seconds} s"
+            )
+        if at < previous:
+            raise DetectorError(f"{described} is reported before the one before it")
+        previous = at
+    processing = report.processing_seconds
+    if not (_is_finite_number(processing) and processing >= 0):
+        raise DetectorError(
+            f"processing time {processing} s isn't a finite number of seconds, "
+            "0 or more"
+        )
+
+
+def _check_look_ahead_report(report: LookAheadReport) -> None:
     """Check that every commercial break in a report is a stretch of time.
 
     Parameters

@@ -7,7 +7,7 @@ from pathlib import Path
 from loguru import logger
 
 from tv_commercial_detector import benchmark, settings
-from tv_commercial_detector.detectors import LookAheadDetector
+from tv_commercial_detector.detectors import Candidate, LookAheadDetector
 from tv_commercial_detector.media_probe import Ffprobe
 from tv_commercial_detector.recording_set import ValidationReport, logo_file, validate
 from tv_commercial_detector.scorecard import format_tables
@@ -66,6 +66,17 @@ def look_ahead_detectors(data_folder: Path, rerun: bool) -> list[LookAheadDetect
     return []
 
 
+def candidates() -> list[Candidate]:
+    """Return the candidates that ``run`` scores.
+
+    Returns
+    -------
+    list[Candidate]
+        None yet: no candidate ships in this milestone.
+    """
+    return []
+
+
 def _run(rerun: bool) -> int:
     """Validate the recording set, score the detectors and log the scorecard.
 
@@ -82,7 +93,7 @@ def _run(rerun: bool) -> int:
         errors, so nothing was run, or a detector failed on a recording.
     """
     data_folder = _log_locations()
-    detectors = look_ahead_detectors(data_folder, rerun)
+    detectors = [*look_ahead_detectors(data_folder, rerun), *candidates()]
     if not detectors:
         logger.warning("No detectors to run yet.")
     result = benchmark.run(

@@ -9,63 +9,17 @@ the run saves. Expected numbers are worked out by hand in each test.
 import hashlib
 import json
 import re
-from dataclasses import dataclass, field
 from pathlib import Path
 
 import pytest
+from fake_detectors import FakeDetector
 from recording_sets import STARTED_AT, RecordingSet
 
 from tv_commercial_detector import cli, settings
 from tv_commercial_detector.benchmark import run
 from tv_commercial_detector.cli import main
-from tv_commercial_detector.detectors import (
-    DetectorError,
-    DetectorKind,
-    LookAheadReport,
-    Recording,
-    ReportedCommercialBreak,
-)
+from tv_commercial_detector.detectors import Recording
 from tv_commercial_detector.settings import DATA_FOLDER_VARIABLE
-
-
-@dataclass
-class FakeDetector:
-    """Look-ahead detector answering with scripted commercial breaks per recording.
-
-    A recording scripted with a string makes the detector fail on it with that
-    message.
-    """
-
-    name: str
-    reports: dict[str, list[tuple[float, float]] | str]
-    seen: list[Recording] = field(default_factory=list)
-    kind: DetectorKind = DetectorKind.LOOK_AHEAD
-
-    def analyze(self, recording: Recording) -> LookAheadReport:
-        """Return the scripted report for a recording.
-
-        Parameters
-        ----------
-        recording : Recording
-            The recording; only its file name is used to pick the script.
-
-        Returns
-        -------
-        LookAheadReport
-            The scripted commercial breaks.
-
-        Raises
-        ------
-        DetectorError
-            If the recording is scripted to fail.
-        """
-        self.seen.append(recording)
-        script = self.reports[recording.path.name]
-        if isinstance(script, str):
-            raise DetectorError(script)
-        return LookAheadReport(
-            tuple(ReportedCommercialBreak(start, end) for start, end in script)
-        )
 
 
 def test_detector_that_finds_every_commercial_break_exactly_misses_none(
