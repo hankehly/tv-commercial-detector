@@ -69,8 +69,9 @@ class ToolAdapter(Protocol):
         recording : Recording
             The recording to analyze.
         output_folder : Path
-            The empty folder the tool must write its output to. The tool runs
-            with it as its working folder.
+            The folder the tool must write its output to. It is emptied, or
+            created, after this returns, and the tool runs with it as its
+            working folder.
 
         Returns
         -------
@@ -85,11 +86,14 @@ class ToolAdapter(Protocol):
         """
         ...
 
-    def read_output(self, output_folder: Path) -> ToolOutput:
+    def read_output(self, recording: Recording, output_folder: Path) -> ToolOutput:
         """Read the commercial breaks the tool found from its output.
 
         Parameters
         ----------
+        recording : Recording
+            The recording the tool analyzed, for output that needs its
+            length, such as a list of the parts to keep.
         output_folder : Path
             The folder the tool wrote its output to.
 
@@ -105,6 +109,10 @@ class ToolAdapter(Protocol):
             If the output can't be read.
         OSError
             If an output file is missing or can't be opened.
+        UnicodeDecodeError
+            If an output file isn't text in the expected encoding.
+
+        Any other exception is a bug in the adapter and stops the run.
         """
         ...
 
@@ -164,9 +172,12 @@ class ExternalTool:
         Raises
         ------
         DetectorError
-            If the command is missing or fails, or its output can't be read or
-            turned into seconds. Failed analysis isn't saved for reuse, so the
-            next run tries again.
+            If the tool can't be called on the recording, its command is
+            missing or exits with an error, or its output can't be read or
+            turned into seconds. Output from a command that exited with an
+            error isn't reused, so the next run tries again; output that exited
+            cleanly is reused even if it can't be read, so a fixed adapter can
+            read it again without rerunning the tool.
         """
         folder = self.data_folder / TOOL_OUTPUT_FOLDER / self.name / recording.path.stem
         source = {"fingerprint": recording.fingerprint, "command": self.command}
@@ -176,8 +187,8 @@ class ExternalTool:
             self._run_tool(recording, folder)
             (folder / SOURCE_FILE_NAME).write_text(json.dumps(source, indent=2) + "\n")
         try:
-            output = self.adapter.read_output(folder)
-        except (OutputError, OSError) as e:
+            output = self.adapter.read_output(recording, folder)
+        except (OutputError, OSError, UnicodeDecodeError) as e:
             raise DetectorError(f"could not read the output of {self.name}: {e}") from e
         return self._in_seconds(output, recording)
 
@@ -189,19 +200,22 @@ class ExternalTool:
         recording : Recording
             The recording to analyze.
         folder : Path
-            The recording's folder of saved output for this tool; anything
-            already in it is removed first.
+            The recording's folder of saved output for this tool. Once the
+            adapter has given the tool's arguments, anything already in it is
+            removed, so output saved earlier survives a tool that can't be
+            called.
 
         Raises
         ------
         DetectorError
-            If the command can't be found or run, or exits with an error.
+            If the adapter can't give the tool's arguments, or the command
+            can't be found or run, or exits with an error.
         """
+        arguments = self.adapter.arguments(recording, folder)
         logger.info(f"{self.name}: analyzing {recording.path.name}")
         if folder.exists():
             shutil.rmtree(folder)
         folder.mkdir(parents=True)
-        arguments = self.adapter.arguments(recording, folder)
         stderr = folder / STDERR_FILE_NAME
         try:
             with (

@@ -18,7 +18,7 @@ from recording_sets import RecordingSet
 
 from tv_commercial_detector import cli, settings
 from tv_commercial_detector.cli import main
-from tv_commercial_detector.detectors import Recording
+from tv_commercial_detector.detectors import DetectorError, Recording
 from tv_commercial_detector.external_tool import (
     ExternalTool,
     OutputError,
@@ -41,7 +41,7 @@ if exit_code.exists():
     sys.exit(int(exit_code.read_text()))
 answer = answers / recording.name
 if answer.exists():
-    (output_folder / "breaks.txt").write_text(answer.read_text())
+    (output_folder / "breaks.txt").write_bytes(answer.read_bytes())
 """
 
 
@@ -65,11 +65,13 @@ class StandInAdapter:
         """
         return [str(recording.path), str(output_folder)]
 
-    def read_output(self, output_folder: Path) -> ToolOutput:
+    def read_output(self, recording: Recording, output_folder: Path) -> ToolOutput:
         """Read the commercial breaks, in frames, from ``breaks.txt``.
 
         Parameters
         ----------
+        recording : Recording
+            The recording the stand-in analyzed; unused.
         output_folder : Path
             The folder the stand-in wrote to.
 
@@ -108,17 +110,18 @@ class StandIn:
         """The command that runs the stand-in."""
         return [sys.executable, str(self.folder / "stand_in.py")]
 
-    def answer(self, recording: str, output: str) -> None:
+    def answer(self, recording: str, output: str | bytes) -> None:
         """Script the output the stand-in writes for a recording.
 
         Parameters
         ----------
         recording : str
             The recording's file name.
-        output : str
+        output : str | bytes
             The content of the output file.
         """
-        (self.folder / recording).write_text(output)
+        content = output.encode() if isinstance(output, str) else output
+        (self.folder / recording).write_bytes(content)
 
     def fail(self, recording: str, exit_code: int) -> None:
         """Script the stand-in to fail on a recording.
@@ -387,6 +390,61 @@ def test_output_that_cannot_be_read_is_an_error_there_and_the_run_carries_on(
         "a.mp4": "could not read the output of stand-in: bad line '1860 to 5340'"
     }
     assert offsets(scorecard, "b.mp4") == (2.0, -2.0)
+
+
+def test_output_that_cannot_be_read_is_kept_and_read_again_without_rerunning(
+    recording_set: RecordingSet, stand_in: StandIn
+) -> None:
+    # The tool finished, so its output is reused: rerunning hours of analysis
+    # wouldn't change it, while a fixed adapter can read it again.
+    recording_set.add("a.mp4", 3600.0, [("00:01:00", "00:03:00")])
+    stand_in.answer("a.mp4", "fps 30\n1860 to 5340\n")
+    first = recording_set.run(stand_in.detector(recording_set.data_folder))
+
+    second = recording_set.run(stand_in.detector(recording_set.data_folder))
+
+    assert stand_in.calls == ["a.mp4"]
+    assert second["detectors"][0]["errors"] == first["detectors"][0]["errors"]
+
+
+def test_output_that_is_not_text_is_an_error(
+    recording_set: RecordingSet, stand_in: StandIn
+) -> None:
+    recording_set.add("a.mp4", 3600.0, [("00:01:00", "00:03:00")])
+    stand_in.answer("a.mp4", b"fps 30\n\xff\xfe\n")
+
+    scorecard = recording_set.run(stand_in.detector(recording_set.data_folder))
+
+    [error] = scorecard["detectors"][0]["errors"].values()
+    assert error.startswith("could not read the output of stand-in: 'utf-8' codec")
+
+
+def test_a_tool_that_cannot_be_called_keeps_the_output_saved_earlier(
+    recording_set: RecordingSet, stand_in: StandIn
+) -> None:
+    recording_set.add("a.mp4", 3600.0, [("00:01:00", "00:03:00")])
+    stand_in.answer("a.mp4", "fps 30\n1860 5340\n")
+    recording_set.run(stand_in.detector(recording_set.data_folder))
+
+    class MissingFile(StandInAdapter):
+        def arguments(self, recording: Recording, output_folder: Path) -> list[str]:
+            raise DetectorError("a file the tool needs is missing")
+
+    detector = ExternalTool(
+        name="stand-in",
+        command=stand_in.command,
+        adapter=MissingFile(),
+        data_folder=recording_set.data_folder,
+        rerun=True,
+    )
+
+    scorecard = recording_set.run(detector)
+
+    assert scorecard["detectors"][0]["errors"] == {
+        "a.mp4": "a file the tool needs is missing"
+    }
+    saved = recording_set.data_folder / "tool-output" / "stand-in" / "a" / "breaks.txt"
+    assert saved.read_text() == "fps 30\n1860 5340\n"
 
 
 def test_missing_output_is_an_error(
