@@ -1,0 +1,68 @@
+#!/usr/bin/env bash
+# Run Comskip in Docker as if it were installed here.
+#
+# Usage: comskip-docker [COMSKIP ARGUMENTS...]
+#
+# Takes the same arguments as comskip. The current folder, every folder named
+# in the arguments, and the folder of every file named in them (values such as
+# --ini=FILE included), are shared with the container at the same paths, so the
+# paths in the arguments work unchanged and Comskip writes its output where it
+# would if it ran here. If a file is a symbolic link, the folder of each file
+# it leads to is shared too, so that Comskip can follow it. Comskip runs in the
+# current folder, without network access.
+#
+# Build its image first: see docs/installing-comskip-and-join-logo-scp.md.
+set -euo pipefail
+
+image=tv-commercial-detector/comskip
+
+# Stop with Docker's own reason if Docker isn't running or the image isn't built.
+if ! reason=$(docker image inspect "$image" 2>&1 >/dev/null); then
+  echo "comskip-docker: can't use the $image image: ${reason%%$'\n'*}" >&2
+  exit 1
+fi
+
+folders=("$PWD")
+
+# Share a folder with the container, unless it already is.
+share() {
+  local known
+  for known in "${folders[@]}"; do
+    [[ $known == "$1" ]] && return
+  done
+  folders+=("$1")
+}
+
+for argument in "$@"; do
+  path=${argument#--*=}
+  if [[ -d $path ]]; then
+    # Docker follows a linked folder it shares.
+    folder=$(cd "$path" && pwd)
+    share "$folder"
+  elif [[ -e $path ]]; then
+    folder=$(cd "$(dirname "$path")" && pwd)
+    share "$folder"
+    # Inside the container a symbolic link leads only as far as the folders
+    # shared, so share the folder of each file it leads to. Linux follows at
+    # most 40 links to open a file, so this stops there too.
+    for ((links = 0; links < 40; links++)); do
+      [[ -L $path ]] || break
+      target=$(readlink "$path")
+      [[ $target == /* ]] || target=$(dirname "$path")/$target
+      folder=$(cd "$(dirname "$target")" && pwd)
+      share "$folder"
+      path=$folder/$(basename "$target")
+    done
+  fi
+done
+
+volumes=()
+for folder in "${folders[@]}"; do
+  volumes+=(--volume "$folder:$folder")
+done
+
+exec docker run --rm --init --pull never --network none \
+  --user "$(id -u):$(id -g)" \
+  "${volumes[@]}" \
+  --workdir "$PWD" \
+  "$image" "$@"
