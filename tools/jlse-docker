@@ -10,10 +10,10 @@
 # channel's logo file (.lgd). jlse's results are written to the current folder;
 # obs_cut.avs lists the frames it keeps.
 #
-# Exits with an error naming the step if any step wrote no output. jlse runs
-# each step even when the one before it failed, and join_logo_scp then writes a
-# cut list without the missing information, so jlse's own exit code can't be
-# trusted.
+# Exits with an error naming the step if any step wrote no output, or if
+# chapter_exe stopped before the end of the recording. jlse runs each step even
+# when the one before it failed, and join_logo_scp then writes a cut list
+# without the missing information, so jlse's own exit code can't be trusted.
 #
 # Build its image first: see docs/installing-comskip-and-join-logo-scp.md.
 set -euo pipefail
@@ -76,5 +76,11 @@ for output in "${outputs[@]}"; do
   step=${output%%:*}
   file=${output#*:}
   [[ -f $file ]] || fail "$step wrote no $file; see jlse's messages"
+  # chapter_exe writes its output as it goes, and ends it with a line starting
+  # "# SCPos:" only once it has read the whole recording. The other steps write
+  # their output only when they have finished.
+  if [[ $step == chapter_exe && $(tail -n 1 "$file") != "# SCPos:"* ]]; then
+    fail "chapter_exe stopped before the end of the recording; see jlse's messages"
+  fi
 done
 [[ $status == 0 ]] || fail "jlse exited with code $status; see its messages"
