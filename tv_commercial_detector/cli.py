@@ -7,7 +7,9 @@ from pathlib import Path
 from loguru import logger
 
 from tv_commercial_detector import benchmark, settings
+from tv_commercial_detector.comskip import ComskipAdapter
 from tv_commercial_detector.detectors import Candidate, LookAheadDetector
+from tv_commercial_detector.external_tool import ExternalTool
 from tv_commercial_detector.media_probe import Ffprobe
 from tv_commercial_detector.recording_set import ValidationReport, logo_file, validate
 from tv_commercial_detector.scorecard import format_tables
@@ -61,9 +63,18 @@ def look_ahead_detectors(data_folder: Path, rerun: bool) -> list[LookAheadDetect
     Returns
     -------
     list[LookAheadDetector]
-        None yet: the Comskip and join_logo_scp adapters are still to come.
+        Comskip, run with the command its setting names. The join_logo_scp
+        adapter is still to come.
     """
-    return []
+    return [
+        ExternalTool(
+            name="comskip",
+            command=settings.comskip_command(),
+            adapter=ComskipAdapter(),
+            data_folder=data_folder,
+            rerun=rerun,
+        )
+    ]
 
 
 def candidates() -> list[Candidate]:

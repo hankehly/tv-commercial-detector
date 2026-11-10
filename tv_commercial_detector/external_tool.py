@@ -61,6 +61,14 @@ class OutputError(Exception):
 class ToolAdapter(Protocol):
     """How to call one external tool and how to read what it wrote."""
 
+    accepted_exit_codes: frozenset[int]
+    """The exit codes after which the tool's output is read; any other is an error.
+
+    Most tools need only 0. A tool that reports what it found through its exit
+    code, as Comskip exits with 1 when it finds no commercial breaks, names
+    those codes too.
+    """
+
     def arguments(self, recording: Recording, output_folder: Path) -> list[str]:
         """Return the arguments that follow the tool's command.
 
@@ -178,7 +186,10 @@ class ExternalTool:
             turned into seconds. Output from a command that exited with an
             error isn't reused, so the next run tries again; output that exited
             cleanly is reused even if it can't be read, so a fixed adapter can
-            read it again without rerunning the tool.
+            read it again without rerunning the tool. Output after a non-zero
+            exit code the adapter accepts is reused only once it has been read,
+            since a wrapper that couldn't start the tool may exit with the
+            same code.
         """
         # The tool runs inside its output folder, so it is given absolute
         # paths: ones relative to where the benchmark started would point
@@ -188,18 +199,27 @@ class ExternalTool:
             self.data_folder / TOOL_OUTPUT_FOLDER / self.name / recording.path.stem
         ).absolute()
         source = {"fingerprint": recording.fingerprint, "command": self.command}
+        saved = folder / SOURCE_FILE_NAME
+        non_zero_exit = None
         if not self.rerun and _saved_source(folder) == source:
             logger.info(f"{self.name}: reusing saved output for {recording.path.name}")
         else:
-            self._run_tool(recording, folder)
-            (folder / SOURCE_FILE_NAME).write_text(json.dumps(source, indent=2) + "\n")
+            non_zero_exit = self._run_tool(recording, folder)
+            if non_zero_exit is None:
+                saved.write_text(json.dumps(source, indent=2) + "\n")
         try:
             output = self.adapter.read_output(recording, folder)
         except (OutputError, OSError, UnicodeDecodeError) as e:
+            if non_zero_exit is not None:
+                raise DetectorError(
+                    f"{non_zero_exit}; could not read its output: {e}"
+                ) from e
             raise DetectorError(f"could not read the output of {self.name}: {e}") from e
+        if non_zero_exit is not None:
+            saved.write_text(json.dumps(source, indent=2) + "\n")
         return self._in_seconds(output, recording)
 
-    def _run_tool(self, recording: Recording, folder: Path) -> None:
+    def _run_tool(self, recording: Recording, folder: Path) -> str | None:
         """Run the tool on a recording, into an emptied folder.
 
         Parameters
@@ -212,11 +232,19 @@ class ExternalTool:
             removed, so output saved earlier survives a tool that can't be
             called.
 
+        Returns
+        -------
+        str | None
+            ``None`` if the tool exited with 0; otherwise, for an exit code the
+            adapter accepts, a message giving the code and the last line of the
+            tool's error output.
+
         Raises
         ------
         DetectorError
             If the adapter can't give the tool's arguments, or the command
-            can't be found or run, or exits with an error.
+            can't be found or run, or exits with a code the adapter doesn't
+            accept.
         """
         arguments = self.adapter.arguments(recording, folder)
         logger.info(f"{self.name}: analyzing {recording.path.name}")
@@ -240,12 +268,14 @@ class ExternalTool:
             raise DetectorError(f"command not found: {self.command[0]}") from e
         except OSError as e:
             raise DetectorError(f"could not run {self.command[0]}: {e}") from e
-        if completed.returncode != 0:
-            lines = stderr.read_text(errors="replace").strip().splitlines()
-            reason = f": {lines[-1].strip()}" if lines else ""
-            raise DetectorError(
-                f"{self.name} exited with code {completed.returncode}{reason}"
-            )
+        if completed.returncode == 0:
+            return None
+        lines = stderr.read_text(errors="replace").strip().splitlines()
+        reason = f": {lines[-1].strip()}" if lines else ""
+        message = f"{self.name} exited with code {completed.returncode}{reason}"
+        if completed.returncode not in self.adapter.accepted_exit_codes:
+            raise DetectorError(message)
+        return message
 
     def _in_seconds(self, output: ToolOutput, recording: Recording) -> LookAheadReport:
         """Turn the commercial breaks a tool found, in frames, into seconds.
