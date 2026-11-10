@@ -23,18 +23,18 @@ from tv_commercial_detector.external_tool import OutputError, ToolOutput
 HEADER = re.compile(r"FILE PROCESSING COMPLETE +(\d+) FRAMES AT +(\d+)")
 """The ``.txt`` file's first line: the last frame's number and the frame rate × 100."""
 
-DASHES = re.compile(r"-+")
+DASHED_LINE = re.compile(r"-+")
 """The ``.txt`` file's second line."""
 
-PAIR = re.compile(r"(\d+)\t(\d+)")
+BREAK_LINE = re.compile(r"(\d+)\t(\d+)")
 """A commercial break's line: its first and last frames, separated by a tab."""
 
 
 class ComskipAdapter:
     """How to call Comskip and read the ``.txt`` file it writes."""
 
-    accepted_exit_codes = frozenset({0, 1})
-    """Comskip exits with 0 when it finds commercial breaks and 1 when it finds none.
+    accepted_exit_codes = frozenset({1})
+    """Comskip exits with 1 when it finds no commercial breaks, 0 when it finds some.
 
     Both write a complete ``.txt`` file. Any other code, such as 255 when it
     can't open the recording, is an error.
@@ -63,8 +63,10 @@ class ComskipAdapter:
         Comskip numbers the frame at 0 s as frame 1, so each frame number is
         turned into frames from the start of the recording by taking 1 off.
         Unless its last commercial break runs to the end, Comskip adds a pair
-        covering only the recording's last frame, which marks the end rather
-        than a commercial break, so it is left out.
+        covering only the recording's last frame or two, which marks the end
+        rather than a commercial break. A last pair that ends on the last frame
+        and lasts under a second is that marker, and is left out: Comskip
+        reports no commercial break under 20 s with its default settings.
 
         Parameters
         ----------
@@ -100,23 +102,25 @@ class ComskipAdapter:
             )
         if len(lines) < 2:
             raise OutputError(f"{path.name} stops before its dashed line")
-        if DASHES.fullmatch(lines[1]) is None:
+        if DASHED_LINE.fullmatch(lines[1]) is None:
             raise OutputError(
                 f"line 2 of {path.name} isn't Comskip's dashed line: {lines[1]!r}"
             )
         last_frame = int(header.group(1))
         frame_rate = int(header.group(2)) / 100
-        frames = []
+        breaks_in_frames = []
         for number, line in enumerate(lines[2:], start=3):
-            pair = PAIR.fullmatch(line)
+            pair = BREAK_LINE.fullmatch(line)
             if pair is None:
                 raise OutputError(
                     f"line {number} of {path.name} isn't a pair of frame numbers: "
                     f"{line!r}"
                 )
-            frames.append((int(pair.group(1)), int(pair.group(2))))
-        if frames and frames[-1][1] == last_frame and frames[-1][0] >= last_frame - 1:
-            frames.pop()
+            breaks_in_frames.append((int(pair.group(1)), int(pair.group(2))))
+        if breaks_in_frames:
+            start, end = breaks_in_frames[-1]
+            if end == last_frame and end - start < frame_rate:
+                breaks_in_frames.pop()
         return ToolOutput(
-            tuple((start - 1, end - 1) for start, end in frames), frame_rate
+            tuple((start - 1, end - 1) for start, end in breaks_in_frames), frame_rate
         )

@@ -62,9 +62,10 @@ class ToolAdapter(Protocol):
     """How to call one external tool and how to read what it wrote."""
 
     accepted_exit_codes: frozenset[int]
-    """The exit codes after which the tool's output is read; any other is an error.
+    """The non-zero exit codes after which the tool's output is still read.
 
-    Most tools need only 0. A tool that reports what it found through its exit
+    0 is always accepted; any code not here is an error. Most tools need only
+    0. A tool that reports what it found through its exit
     code, as Comskip exits with 1 when it finds no commercial breaks, names
     those codes too.
     """
@@ -199,24 +200,25 @@ class ExternalTool:
             self.data_folder / TOOL_OUTPUT_FOLDER / self.name / recording.path.stem
         ).absolute()
         source = {"fingerprint": recording.fingerprint, "command": self.command}
-        saved = folder / SOURCE_FILE_NAME
-        non_zero_exit = None
+        accepted_exit = None
         if not self.rerun and _saved_source(folder) == source:
             logger.info(f"{self.name}: reusing saved output for {recording.path.name}")
         else:
-            non_zero_exit = self._run_tool(recording, folder)
-            if non_zero_exit is None:
-                saved.write_text(json.dumps(source, indent=2) + "\n")
+            accepted_exit = self._run_tool(recording, folder)
+            if accepted_exit is None:
+                _save_source(folder, source)
         try:
             output = self.adapter.read_output(recording, folder)
         except (OutputError, OSError, UnicodeDecodeError) as e:
-            if non_zero_exit is not None:
+            if accepted_exit is None:
                 raise DetectorError(
-                    f"{non_zero_exit}; could not read its output: {e}"
+                    f"could not read the output of {self.name}: {e}"
                 ) from e
-            raise DetectorError(f"could not read the output of {self.name}: {e}") from e
-        if non_zero_exit is not None:
-            saved.write_text(json.dumps(source, indent=2) + "\n")
+            raise DetectorError(
+                f"{accepted_exit}; could not read its output: {e}"
+            ) from e
+        if accepted_exit is not None:
+            _save_source(folder, source)
         return self._in_seconds(output, recording)
 
     def _run_tool(self, recording: Recording, folder: Path) -> str | None:
@@ -235,9 +237,9 @@ class ExternalTool:
         Returns
         -------
         str | None
-            ``None`` if the tool exited with 0; otherwise, for an exit code the
-            adapter accepts, a message giving the code and the last line of the
-            tool's error output.
+            ``None`` if the tool exited with 0; otherwise, for a non-zero exit
+            code the adapter accepts, a message giving the code and the last
+            line of the tool's error output.
 
         Raises
         ------
@@ -343,6 +345,19 @@ def _saved_source(folder: Path) -> dict | None:
         return json.loads((folder / SOURCE_FILE_NAME).read_text())
     except OSError, json.JSONDecodeError:
         return None
+
+
+def _save_source(folder: Path, source: dict) -> None:
+    """Note what a recording's saved output came from, so it can be reused.
+
+    Parameters
+    ----------
+    folder : Path
+        The recording's folder of saved output for one tool.
+    source : dict
+        The fingerprint and command the output came from.
+    """
+    (folder / SOURCE_FILE_NAME).write_text(json.dumps(source, indent=2) + "\n")
 
 
 def _runnable(command: list[str]) -> list[str]:

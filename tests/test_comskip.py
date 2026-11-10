@@ -5,12 +5,13 @@ A stand-in takes Comskip's place: called with Comskip's arguments, it writes the
 the scripted code. The scripted files in ``fixtures/comskip/`` are real
 Comskip 0.83.001 output, with its default detection settings:
 
-- ``no-breaks.txt``: the 89-minute pilot recording ``2026-11-01_17-01-22.mp4``,
-  in which Comskip found no commercial breaks and exited with code 1.
-- ``break-in-the-middle.txt``: a 10-minute recording made by joining a
+- ``no-commercial-breaks.txt``: the 89-minute pilot recording
+  ``2026-11-01_17-01-22.mp4``, in which Comskip found no commercial breaks and
+  exited with code 1.
+- ``commercial-break-in-the-middle.txt``: a 10-minute recording made by joining a
   3-minute stretch of program, a 4-minute stretch of commercial break and the
   same stretch of program again. Comskip exited with code 0.
-- ``break-to-the-end.txt``: the 4-minute stretch of commercial break on its
+- ``commercial-break-to-the-end.txt``: the 4-minute stretch of commercial break on its
   own, which Comskip found to be one commercial break from its second frame to
   its last. Comskip exited with code 0.
 """
@@ -175,11 +176,13 @@ def test_a_commercial_break_in_the_middle_is_turned_into_seconds(
     # Comskip numbers the frame at 0 s as frame 1, so frames 5738 and 11282 at
     # the 29.97 fps it reports are 5737 / 29.97 s and 11281 / 29.97 s. The
     # pair after it, 17980 to 17981, only marks the last frame.
-    comskip.answer_with_fixture("a.mp4", "break-in-the-middle.txt", exit_code=0)
+    comskip.answer_with_fixture(
+        "a.mp4", "commercial-break-in-the-middle.txt", exit_code=0
+    )
 
-    breaks = comskip.analyze("a.mp4")
+    commercial_breaks = comskip.analyze("a.mp4")
 
-    assert breaks == [
+    assert commercial_breaks == [
         (pytest.approx(191.4247, abs=1e-4), pytest.approx(376.4097, abs=1e-4))
     ]
 
@@ -189,7 +192,7 @@ def test_no_commercial_breaks_found_is_a_result_not_an_error(
 ) -> None:
     # Comskip exits with code 1 when it finds none; its only pair, 160094 to
     # 160095, marks the last frame.
-    comskip.answer_with_fixture("a.mp4", "no-breaks.txt", exit_code=1)
+    comskip.answer_with_fixture("a.mp4", "no-commercial-breaks.txt", exit_code=1)
 
     assert comskip.analyze("a.mp4") == []
 
@@ -241,11 +244,11 @@ def test_malformed_output_is_an_error(
 def test_a_commercial_break_running_to_the_end_is_kept(comskip: StandIn) -> None:
     # It ends on the last frame, 7181, so Comskip adds no pair to mark it.
     # Frames 2 and 7181 are 1 / 29.97 s and 7180 / 29.97 s.
-    comskip.answer_with_fixture("a.mp4", "break-to-the-end.txt", exit_code=0)
+    comskip.answer_with_fixture("a.mp4", "commercial-break-to-the-end.txt", exit_code=0)
 
-    breaks = comskip.analyze("a.mp4")
+    commercial_breaks = comskip.analyze("a.mp4")
 
-    assert breaks == [
+    assert commercial_breaks == [
         (pytest.approx(0.0334, abs=1e-4), pytest.approx(239.5729, abs=1e-4))
     ]
 
@@ -266,7 +269,7 @@ def test_comskip_is_given_only_where_to_write_and_the_recording(
     comskip: StandIn,
 ) -> None:
     # Its default detection settings, in its normal whole-recording mode.
-    comskip.answer_with_fixture("a.mp4", "no-breaks.txt", exit_code=1)
+    comskip.answer_with_fixture("a.mp4", "no-commercial-breaks.txt", exit_code=1)
 
     comskip.analyze("a.mp4")
 
@@ -285,8 +288,10 @@ def test_run_scores_comskip_with_the_command_its_setting_names(
     # offsets to the millisecond.
     recording_set.add("a.mp4", 600.0, [("00:03:00", "00:06:00")])
     recording_set.add("b.mp4", 600.0, [])
-    comskip.answer_with_fixture("a.mp4", "break-in-the-middle.txt", exit_code=0)
-    comskip.answer_with_fixture("b.mp4", "no-breaks.txt", exit_code=1)
+    comskip.answer_with_fixture(
+        "a.mp4", "commercial-break-in-the-middle.txt", exit_code=0
+    )
+    comskip.answer_with_fixture("b.mp4", "no-commercial-breaks.txt", exit_code=1)
     monkeypatch.setenv(COMSKIP_COMMAND_VARIABLE, shlex.join(comskip.command))
     monkeypatch.setenv(DATA_FOLDER_VARIABLE, str(recording_set.data_folder))
     monkeypatch.setattr(settings, "RECORDING_LIST", recording_set.recording_list)
@@ -305,3 +310,22 @@ def test_run_scores_comskip_with_the_command_its_setting_names(
     assert a["end_offset_median"]["value"] == 16.41
     b = scored["per_recording"]["b.mp4"]
     assert b["false_flips_per_hour"]["value"] == 0.0
+
+
+def test_the_last_frame_pair_is_left_out_when_the_last_frames_are_spaced_unevenly(
+    comskip: StandIn,
+) -> None:
+    # Comskip numbers frames by their times, so a gap between the last two
+    # frames puts the pair marking the end more than one frame apart.
+    comskip.answer(
+        "a.mp4",
+        "FILE PROCESSING COMPLETE  17981 FRAMES AT  2997\n"
+        "-------------------\n5738\t11282\n17978\t17981\n",
+        exit_code=0,
+    )
+
+    commercial_breaks = comskip.analyze("a.mp4")
+
+    assert commercial_breaks == [
+        (pytest.approx(191.4247, abs=1e-4), pytest.approx(376.4097, abs=1e-4))
+    ]

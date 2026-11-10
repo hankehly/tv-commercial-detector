@@ -45,10 +45,21 @@ if exit_code.exists():
 """
 
 
-class StandInAdapter:
-    """Says how to call the stand-in and how to read its output."""
+ONE = frozenset({1})
+"""The exit codes accepted from a tool that, like Comskip, exits with 1 for nothing."""
 
-    accepted_exit_codes = frozenset({0})
+
+class StandInAdapter:
+    """Says how to call the stand-in and how to read its output.
+
+    Parameters
+    ----------
+    accepted_exit_codes : frozenset[int]
+        The non-zero exit codes after which the stand-in's output is still read.
+    """
+
+    def __init__(self, accepted_exit_codes: frozenset[int] = frozenset()) -> None:
+        self.accepted_exit_codes = accepted_exit_codes
 
     def arguments(self, recording: Recording, output_folder: Path) -> list[str]:
         """Return the stand-in's arguments: the recording, then the output folder.
@@ -148,6 +159,7 @@ class StandIn:
         data_folder: Path,
         command: list[str] | None = None,
         rerun: bool = False,
+        accepted_exit_codes: frozenset[int] = frozenset(),
     ) -> ExternalTool:
         """Return a look-ahead detector that runs the stand-in.
 
@@ -159,6 +171,8 @@ class StandIn:
             The command to run; the stand-in's own when ``None``.
         rerun : bool
             Whether to analyze afresh instead of reusing saved output.
+        accepted_exit_codes : frozenset[int]
+            The non-zero exit codes after which the output is still read.
 
         Returns
         -------
@@ -168,7 +182,7 @@ class StandIn:
         return ExternalTool(
             name="stand-in",
             command=self.command if command is None else command,
-            adapter=StandInAdapter(),
+            adapter=StandInAdapter(accepted_exit_codes),
             data_folder=data_folder,
             rerun=rerun,
         )
@@ -377,35 +391,6 @@ def test_a_non_zero_exit_is_an_error_there_and_is_tried_again_next_run(
     assert stand_in.calls == ["a.mp4", "b.mp4", "a.mp4"]
 
 
-class AcceptsOne(StandInAdapter):
-    """A stand-in adapter for a tool that exits with 1 when it finds nothing."""
-
-    accepted_exit_codes = frozenset({0, 1})
-
-
-def accepting_one(stand_in: StandIn, data_folder: Path) -> ExternalTool:
-    """Return a detector that runs the stand-in and accepts exit code 1.
-
-    Parameters
-    ----------
-    stand_in : StandIn
-        The stand-in.
-    data_folder : Path
-        The data folder.
-
-    Returns
-    -------
-    ExternalTool
-        The detector, named ``stand-in``.
-    """
-    return ExternalTool(
-        name="stand-in",
-        command=stand_in.command,
-        adapter=AcceptsOne(),
-        data_folder=data_folder,
-    )
-
-
 def test_output_after_an_exit_code_the_adapter_accepts_is_read_and_reused(
     recording_set: RecordingSet, stand_in: StandIn
 ) -> None:
@@ -413,8 +398,12 @@ def test_output_after_an_exit_code_the_adapter_accepts_is_read_and_reused(
     stand_in.answer("a.mp4", "fps 30\n1860 5340\n")
     stand_in.fail("a.mp4", exit_code=1)
 
-    first = recording_set.run(accepting_one(stand_in, recording_set.data_folder))
-    second = recording_set.run(accepting_one(stand_in, recording_set.data_folder))
+    first = recording_set.run(
+        stand_in.detector(recording_set.data_folder, accepted_exit_codes=ONE)
+    )
+    second = recording_set.run(
+        stand_in.detector(recording_set.data_folder, accepted_exit_codes=ONE)
+    )
 
     assert first["detectors"][0]["errors"] == {}
     assert offsets(first, "a.mp4") == (2.0, -2.0)
@@ -430,8 +419,12 @@ def test_unreadable_output_after_an_accepted_non_zero_exit_is_tried_again_next_r
     recording_set.add("a.mp4", 3600.0, [("00:01:00", "00:03:00")])
     stand_in.fail("a.mp4", exit_code=1)
 
-    first = recording_set.run(accepting_one(stand_in, recording_set.data_folder))
-    second = recording_set.run(accepting_one(stand_in, recording_set.data_folder))
+    first = recording_set.run(
+        stand_in.detector(recording_set.data_folder, accepted_exit_codes=ONE)
+    )
+    second = recording_set.run(
+        stand_in.detector(recording_set.data_folder, accepted_exit_codes=ONE)
+    )
 
     [error] = first["detectors"][0]["errors"].values()
     assert error.startswith(
