@@ -95,6 +95,13 @@ _Avoid_: end delay
 **Startup delay**:
 The time from when the detector starts, or its input resumes, until it reports what the labels say is on air at that moment.
 
+**Test start**:
+A moment in a recording where the benchmark starts a candidate cold to measure its startup delay: the middle of a long commercial break, or a spot inside a program away from any labeled edge. Every run picks the same ones.
+_Avoid_: starting point, probe point
+
+**Trial run**:
+A short run of a candidate over the 15 s of broadcast from a test start, as opposed to its full run over the whole recording.
+
 **Processing speed**:
 How long the detector takes to process one second of broadcast, wherever it runs.
 
