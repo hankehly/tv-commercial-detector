@@ -928,3 +928,44 @@ def test_processing_speed_pools_every_recording(
         "value": pytest.approx(1 / 3),
         "based_on": {"hours": 1.5},
     }
+
+
+@pytest.mark.parametrize("back_at", [59.9, 60.1])
+def test_flicker_after_first_reporting_the_new_labeled_state_is_a_false_flip(
+    recording_set: RecordingSet, back_at: float
+) -> None:
+    # Labels 60 to 180 s. The candidate first reports the commercial break at
+    # 59.5 s, which ends settling. Dropping to the program at 59.7 s is a
+    # false flip, whether it comes back before the labeled start or after.
+    recording_set.add("a.mp4", 3600.0, [("00:01:00", "00:03:00")])
+    candidate = FakeCandidate(
+        "fake",
+        {
+            "a.mp4": [
+                (PROGRAM, 1.0),
+                (CB, 59.5),
+                (PROGRAM, 59.7),
+                (CB, back_at),
+                (PROGRAM, 180.0),
+            ]
+        },
+    )
+
+    scorecard = recording_set.run(candidate)
+
+    overall = scorecard["detectors"][0]["overall"]
+    assert overall["false_flips_per_hour"]["value"] == 1.0
+
+
+def test_changes_reported_after_the_recording_ends_are_not_false_flips(
+    recording_set: RecordingSet,
+) -> None:
+    # An hour with no commercial breaks. UNKNOWN reported at 3600.3 s, after
+    # the end, falls outside the hour scored, like a late exit near the end.
+    recording_set.add("a.mp4", 3600.0, [])
+    candidate = FakeCandidate("fake", {"a.mp4": [(PROGRAM, 1.0), (UNKNOWN, 3600.3)]})
+
+    scorecard = recording_set.run(candidate)
+
+    overall = scorecard["detectors"][0]["overall"]
+    assert overall["false_flips_per_hour"]["value"] == 0.0

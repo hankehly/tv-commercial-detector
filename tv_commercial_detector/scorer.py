@@ -44,13 +44,15 @@ or still running at the    the recording ends.
 end
 Settling                   From the start of the run until the state first
                            matches the labels, and from 0.5 s before each
-                           labeled edge until the state reaches the new labeled
-                           one, at the moment the delay is measured to. Every
-                           labeled edge counts, even in the last 5 s.
+                           labeled edge until the state is first the new
+                           labeled one. Every labeled edge counts, even in the
+                           last 5 s.
 False flip                 While settled, a change to any state other than the
                            labeled one, ``UNKNOWN`` included; the labeled one
                            changes 0.5 s before each edge. A return to it isn't
-                           counted. Counted per hour of recording scored.
+                           counted, nor is a change reported at or after the
+                           recording's end. Counted per hour of recording
+                           scored.
 Processing speed           The full run's processing time divided by the
                            recording's length.
 =========================  ====================================================
@@ -157,8 +159,7 @@ class LookAheadTally:
         return {
             "missed_commercial_breaks": Measure(self.missed, labeled),
             "false_flips_per_hour": Measure(
-                self.false_flips / self.hours if self.hours else None,
-                {"hours": self.hours},
+                _per_hour(self.false_flips, self.hours), {"hours": self.hours}
             ),
             "start_offset_median_size": Measure(_median(start_sizes), matched),
             "start_offset_p95_size": Measure(_percentile(start_sizes, 95), matched),
@@ -331,8 +332,8 @@ class CandidateTally:
     that could be measured, so a missed commercial break counts towards
     ``entry_counted`` without a delay. ``hours`` is the length of the
     recordings scored and ``processing_seconds`` the time their full runs
-    took. Tallies for several recordings add up, so overall
-    figures pool them.
+    took. Tallies for several recordings add up, so overall figures pool
+    them.
     """
 
     commercial_breaks: int = 0
@@ -373,7 +374,7 @@ class CandidateTally:
     @property
     def false_flips_per_hour(self) -> float | None:
         """False flips per hour of recording scored, or ``None`` for no hours."""
-        return self.false_flips / self.hours if self.hours else None
+        return _per_hour(self.false_flips, self.hours)
 
     @property
     def processing_speed(self) -> float | None:
@@ -507,22 +508,23 @@ def tally_candidate(
         entry_delays=tuple(entry_delays),
         exit_counted=exit_counted,
         exit_delays=tuple(exit_delays),
-        false_flips=_false_flips(timeline, labeled),
+        false_flips=_false_flips(timeline, labeled, length),
         hours=recording.hours,
         processing_seconds=report.processing_seconds,
     )
 
 
-def _false_flips(timeline: _Timeline, labeled: Sequence[CommercialBreak]) -> int:
+def _false_flips(
+    timeline: _Timeline, labeled: Sequence[CommercialBreak], length: float
+) -> int:
     """Count a full run's false flips.
 
-    The labels split the run into stretches, each with one labeled state: from
-    the start of the run, and from ``LABELING_IMPRECISION_SECONDS`` before
-    each labeled edge, until the next stretch. In each, the candidate settles
-    once its state reaches the labeled one, at the moment the entry or exit
-    delay is measured to; at the start of the run, that is its first report
-    matching the labels. Once settled, every change to another state is a
-    false flip; a return to the labeled state isn't.
+    The labels split the recording into stretches, each with one labeled
+    state: from the start, and from ``LABELING_IMPRECISION_SECONDS`` before
+    each labeled edge, until the next stretch or the recording's end. In each,
+    the candidate settles at the first moment its state is the labeled one.
+    Once settled, every change to another state is a false flip; a return to
+    the labeled state isn't.
 
     Parameters
     ----------
@@ -532,6 +534,9 @@ def _false_flips(timeline: _Timeline, labeled: Sequence[CommercialBreak]) -> int
         The labeled commercial breaks, sorted, not touching. Every one counts,
         even one starting in the last 5 s, since its edges still explain a
         change.
+    length : float
+        The recording's length, in seconds; changes reported at or after it
+        fall outside the recording scored.
 
     Returns
     -------
@@ -541,21 +546,19 @@ def _false_flips(timeline: _Timeline, labeled: Sequence[CommercialBreak]) -> int
     under_way = bool(labeled) and labeled[0].start_seconds <= 0.0
     stretches = [(0.0, State.COMMERCIAL_BREAK if under_way else State.PROGRAM)]
     for labeled_break in labeled:
+        edges = [(labeled_break.end_seconds, State.PROGRAM)]
         if labeled_break.start_seconds > 0.0:
-            stretches.append((labeled_break.start_seconds, State.COMMERCIAL_BREAK))
-        stretches.append((labeled_break.end_seconds, State.PROGRAM))
-    starts = [0.0] + [
-        _offset(edge, LABELING_IMPRECISION_SECONDS) for edge, _ in stretches[1:]
-    ]
+            edges.insert(0, (labeled_break.start_seconds, State.COMMERCIAL_BREAK))
+        stretches += [
+            (_offset(edge, LABELING_IMPRECISION_SECONDS), state)
+            for edge, state in edges
+        ]
+    ends = [start for start, _ in stretches[1:]] + [length]
     false_flips = 0
-    for (edge, state), until in zip(stretches, starts[1:] + [math.inf]):
-        settled = timeline.reached(state, edge, until)
-        if settled is None or settled >= until:
-            continue
-        false_flips += sum(
-            settled < at < until and reported != state
-            for at, reported in timeline.changes
-        )
+    for (start, state), end in zip(stretches, ends):
+        settled = timeline.settles(state, start, end)
+        if settled is not None:
+            false_flips += timeline.changes_away(state, settled, end)
     return false_flips
 
 
@@ -652,6 +655,60 @@ class _Timeline:
             elif reported == state:
                 return True
         return state_then == state
+
+    def settles(self, state: State, start: float, before: float) -> float | None:
+        """Return the first moment in a stretch at which the state is a given one.
+
+        Parameters
+        ----------
+        state : State
+            The state looked for.
+        start : float
+            Where the stretch starts.
+        before : float
+            Where the stretch ends, exclusive.
+
+        Returns
+        -------
+        float | None
+            ``start`` itself if the state is already the one looked for there,
+            otherwise the first change to it in the stretch; ``None`` if there
+            is no such moment.
+        """
+        if start >= before:
+            return None
+        if self.state_at(start) == state:
+            return start
+        return next(
+            (
+                at
+                for at, reported in self.changes
+                if start < at < before and reported == state
+            ),
+            None,
+        )
+
+    def changes_away(self, state: State, after: float, before: float) -> int:
+        """Count the changes to any other state than a given one in a stretch.
+
+        Parameters
+        ----------
+        state : State
+            The state changes away from are counted.
+        after : float
+            Where the stretch starts, exclusive.
+        before : float
+            Where the stretch ends, exclusive.
+
+        Returns
+        -------
+        int
+            How many changes reported after ``after`` and before ``before``
+            are to another state.
+        """
+        return sum(
+            after < at < before and reported != state for at, reported in self.changes
+        )
 
     def reached(self, state: State, edge: float, before: float) -> float | None:
         """Return when the state reaches a given one at or after a labeled edge.
@@ -774,10 +831,28 @@ def _at_most(value: float | None, limit: float) -> bool:
     Returns
     -------
     bool
-        ``True`` if the value, to the microsecond so float noise can't tip it
-        over, is at most the limit; ``False`` when there is no value.
+        ``True`` if the value, to six decimal places so float noise can't tip
+        it over, is at most the limit; ``False`` when there is no value.
     """
     return value is not None and round(value, 6) <= limit
+
+
+def _per_hour(count: int, hours: float) -> float | None:
+    """Return a count per hour.
+
+    Parameters
+    ----------
+    count : int
+        The count.
+    hours : float
+        The hours it was counted over.
+
+    Returns
+    -------
+    float | None
+        ``count / hours``, or ``None`` when there are no hours.
+    """
+    return count / hours if hours else None
 
 
 def _share(count: int, total: int) -> float | None:
