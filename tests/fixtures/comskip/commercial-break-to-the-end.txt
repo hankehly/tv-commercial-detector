@@ -1,0 +1,3 @@
+FILE PROCESSING COMPLETE   7181 FRAMES AT  2997
+-------------------
+2	7181

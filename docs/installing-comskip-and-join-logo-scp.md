@@ -60,7 +60,7 @@ Comskip's exit code says whether it found anything, so a successful run doesn't 
 | 1 | Found no commercial breaks | Complete |
 | 255 | Couldn't open the recording | Empty |
 
-On Windows, 0 and 1 are the other way round. The benchmark's shared plumbing treats every exit code but 0 as an error, so the Comskip adapter ([#24](https://github.com/hankehly/tv-commercial-detector/issues/24)) needs a way to accept 1 when the `.txt` file is complete.
+On Windows, 0 and 1 are the other way round. The benchmark's Comskip adapter ([#24](https://github.com/hankehly/tv-commercial-detector/issues/24)) accepts 0 and 1, and then reads the `.txt` file. Any other exit code is an error. After exit code 1, the `.txt` file is kept for later runs only if it can be read, since `comskip-docker` also exits with 1 when Docker isn't running; otherwise the run is recorded as an error and tried again next time.
 
 ## Check that it works
 

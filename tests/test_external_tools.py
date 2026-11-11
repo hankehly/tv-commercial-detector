@@ -35,18 +35,31 @@ recording, output_folder = Path(sys.argv[-2]), Path(sys.argv[-1])
 answers = Path({answers!r})
 with (answers / "calls.log").open("a") as f:
     f.write(recording.name + "\\n")
+answer = answers / recording.name
+if answer.exists():
+    (output_folder / "breaks.txt").write_bytes(answer.read_bytes())
 exit_code = answers / (recording.name + ".exit")
 if exit_code.exists():
     sys.stderr.write("stand-in: could not open the recording\\n")
     sys.exit(int(exit_code.read_text()))
-answer = answers / recording.name
-if answer.exists():
-    (output_folder / "breaks.txt").write_bytes(answer.read_bytes())
 """
 
 
+ONE = frozenset({1})
+"""The exit codes accepted from a tool that, like Comskip, exits with 1 for nothing."""
+
+
 class StandInAdapter:
-    """Says how to call the stand-in and how to read its output."""
+    """Says how to call the stand-in and how to read its output.
+
+    Parameters
+    ----------
+    accepted_exit_codes : frozenset[int]
+        The non-zero exit codes after which the stand-in's output is still read.
+    """
+
+    def __init__(self, accepted_exit_codes: frozenset[int] = frozenset()) -> None:
+        self.accepted_exit_codes = accepted_exit_codes
 
     def arguments(self, recording: Recording, output_folder: Path) -> list[str]:
         """Return the stand-in's arguments: the recording, then the output folder.
@@ -124,7 +137,7 @@ class StandIn:
         (self.folder / recording).write_bytes(content)
 
     def fail(self, recording: str, exit_code: int) -> None:
-        """Script the stand-in to fail on a recording.
+        """Script the stand-in to exit with a code, after writing any answer.
 
         Parameters
         ----------
@@ -146,6 +159,7 @@ class StandIn:
         data_folder: Path,
         command: list[str] | None = None,
         rerun: bool = False,
+        accepted_exit_codes: frozenset[int] = frozenset(),
     ) -> ExternalTool:
         """Return a look-ahead detector that runs the stand-in.
 
@@ -157,6 +171,8 @@ class StandIn:
             The command to run; the stand-in's own when ``None``.
         rerun : bool
             Whether to analyze afresh instead of reusing saved output.
+        accepted_exit_codes : frozenset[int]
+            The non-zero exit codes after which the output is still read.
 
         Returns
         -------
@@ -166,7 +182,7 @@ class StandIn:
         return ExternalTool(
             name="stand-in",
             command=self.command if command is None else command,
-            adapter=StandInAdapter(),
+            adapter=StandInAdapter(accepted_exit_codes),
             data_folder=data_folder,
             rerun=rerun,
         )
@@ -373,6 +389,50 @@ def test_a_non_zero_exit_is_an_error_there_and_is_tried_again_next_run(
     assert offsets(first, "b.mp4") == (2.0, -2.0)
     assert second["detectors"][0]["errors"] == scored["errors"]
     assert stand_in.calls == ["a.mp4", "b.mp4", "a.mp4"]
+
+
+def test_output_after_an_exit_code_the_adapter_accepts_is_read_and_reused(
+    recording_set: RecordingSet, stand_in: StandIn
+) -> None:
+    recording_set.add("a.mp4", 3600.0, [("00:01:00", "00:03:00")])
+    stand_in.answer("a.mp4", "fps 30\n1860 5340\n")
+    stand_in.fail("a.mp4", exit_code=1)
+
+    first = recording_set.run(
+        stand_in.detector(recording_set.data_folder, accepted_exit_codes=ONE)
+    )
+    second = recording_set.run(
+        stand_in.detector(recording_set.data_folder, accepted_exit_codes=ONE)
+    )
+
+    assert first["detectors"][0]["errors"] == {}
+    assert offsets(first, "a.mp4") == (2.0, -2.0)
+    assert offsets(second, "a.mp4") == (2.0, -2.0)
+    assert stand_in.calls == ["a.mp4"]
+
+
+def test_unreadable_output_after_an_accepted_non_zero_exit_is_tried_again_next_run(
+    recording_set: RecordingSet, stand_in: StandIn
+) -> None:
+    # A wrapper that can't start the tool, such as one needing Docker, may
+    # exit with the same code the tool uses for finding nothing.
+    recording_set.add("a.mp4", 3600.0, [("00:01:00", "00:03:00")])
+    stand_in.fail("a.mp4", exit_code=1)
+
+    first = recording_set.run(
+        stand_in.detector(recording_set.data_folder, accepted_exit_codes=ONE)
+    )
+    second = recording_set.run(
+        stand_in.detector(recording_set.data_folder, accepted_exit_codes=ONE)
+    )
+
+    [error] = first["detectors"][0]["errors"].values()
+    assert error.startswith(
+        "stand-in exited with code 1: stand-in: could not open the recording; "
+        "could not read its output: "
+    )
+    assert second["detectors"][0]["errors"] == first["detectors"][0]["errors"]
+    assert stand_in.calls == ["a.mp4", "a.mp4"]
 
 
 def test_output_that_cannot_be_read_is_an_error_there_and_the_run_carries_on(
