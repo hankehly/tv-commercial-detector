@@ -105,7 +105,10 @@ def test_test_starts_are_the_same_on_every_run(recording_set: RecordingSet) -> N
         "a.mp4", 3600.0, [("00:05:00", "00:06:40"), ("00:16:40", "00:18:20")]
     )
     recording_set.add("b.mp4", 1800.0, [])
-    script = {"a.mp4": [(PROGRAM, 0.0)], "b.mp4": [(PROGRAM, 0.0)]}
+    script: dict[str, list[tuple[State, float]] | str] = {
+        "a.mp4": [(PROGRAM, 0.0)],
+        "b.mp4": [(PROGRAM, 0.0)],
+    }
     first, second = FakeCandidate("fake", script), FakeCandidate("fake", script)
 
     first_scorecard = recording_set.run(first)
