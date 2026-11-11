@@ -9,19 +9,13 @@ scorecard the run saves.
 
 import pytest
 from fake_detectors import FakeCandidate
-from recording_sets import RecordingSet
+from recording_sets import RecordingSet, clock
 
 from tv_commercial_detector.detectors import State
 
 CB = State.COMMERCIAL_BREAK
 PROGRAM = State.PROGRAM
 UNKNOWN = State.UNKNOWN
-
-
-def clock(seconds: float) -> str:
-    """Write a whole number of seconds as a label time, hh:mm:ss."""
-    minutes, secs = divmod(int(seconds), 60)
-    return f"{minutes // 60:02d}:{minutes % 60:02d}:{secs:02d}"
 
 
 def trial_runs(candidate: FakeCandidate) -> list[tuple[str, float, float]]:
@@ -117,6 +111,8 @@ def test_test_starts_are_the_same_on_every_run(recording_set: RecordingSet) -> N
     first_scorecard = recording_set.run(first)
     second_scorecard = recording_set.run(second)
 
+    # a: 2 test starts in commercial breaks and 2 inside programs; b: none in
+    # commercial breaks, so 1 inside a program.
     assert trial_runs(first) == trial_runs(second)
     assert len(trial_runs(first)) == 5
     assert first_scorecard["detectors"] == second_scorecard["detectors"]
@@ -129,8 +125,9 @@ def test_recording_too_short_or_too_busy_gets_no_program_test_start(
     # busy: commercial breaks leave only 20 s of program between them, so it
     #   gets one test start mid-commercial break and none inside a program.
     # tight: the program between its commercial breaks is exactly 30 s, so
-    #   its middle, 15 s from both edges, is the only place for the two test
-    #   starts inside a program.
+    #   its middle, 15 s from both edges, is the only place for a test start
+    #   inside a program. Its two commercial breaks ask for two there, but one
+    #   moment is only tested once.
     recording_set.add("short.mp4", 10.0, [])
     recording_set.add(
         "busy.mp4", 300.0, [("00:00:00", "00:02:00"), ("00:02:20", "00:05:00")]
@@ -155,14 +152,13 @@ def test_recording_too_short_or_too_busy_gets_no_program_test_start(
         ("tight.mp4", 60.0, 75.0),
         ("tight.mp4", 225.0, 240.0),
         ("tight.mp4", 135.0, 150.0),
-        ("tight.mp4", 135.0, 150.0),
     ]
     per_recording = scorecard["detectors"][0]["per_recording"]
     starts = {
         name: measures["startup_delay_within_limit"]["based_on"]["test_starts"]
         for name, measures in per_recording.items()
     }
-    assert starts == {"short.mp4": 0, "busy.mp4": 2, "tight.mp4": 4}
+    assert starts == {"short.mp4": 0, "busy.mp4": 2, "tight.mp4": 3}
     warnings = [line for line in log if line.startswith("WARNING")]
     assert warnings == [
         "WARNING busy.mp4 has no program at least 15 s from every labeled edge "

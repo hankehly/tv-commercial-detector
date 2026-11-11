@@ -10,19 +10,12 @@ import re
 
 import pytest
 from fake_detectors import FakeCandidate, FakeDetector
-from recording_sets import RecordingSet
+from recording_sets import RecordingSet, clock
 
 from tv_commercial_detector import cli, settings
 from tv_commercial_detector.cli import main
 from tv_commercial_detector.detectors import State
 from tv_commercial_detector.settings import DATA_FOLDER_VARIABLE
-
-
-def clock(seconds: float) -> str:
-    """Write a whole number of seconds as a label time, hh:mm:ss."""
-    minutes, secs = divmod(int(seconds), 60)
-    return f"{minutes // 60:02d}:{minutes % 60:02d}:{secs:02d}"
-
 
 CB = State.COMMERCIAL_BREAK
 PROGRAM = State.PROGRAM

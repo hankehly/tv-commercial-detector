@@ -54,8 +54,8 @@ In commercial breaks       One test start at the midpoint of each labeled
 In programs                As many again, at least one per recording, at random
                            positions at least 15 s from every labeled edge and
                            from the recording's end, seeded so every run picks
-                           the same ones. A recording with no such position
-                           gets none.
+                           the same ones. A position drawn twice is tested
+                           once; a recording with no such position gets none.
 Startup delay              From the test start until the candidate first
                            reports what the labels say is on air, before the
                            trial run ends. If it never does, it counts as over
@@ -393,7 +393,7 @@ class CandidateTally:
 
     @property
     def startup_within_limit(self) -> int:
-        """How many test starts the candidate settled within the startup limit."""
+        """How many test starts had the labeled state reported within the limit."""
         return _within_limit(self.startup_delays, STARTUP_LIMIT_SECONDS)
 
     def measures(self) -> dict[str, Measure]:
@@ -551,10 +551,11 @@ def test_starts(recording: LabeledRecording) -> tuple[TestStart, ...]:
         ``TEST_START_BREAK_SECONDS`` long, in order; then as many again inside
         programs, at least one, at random positions at least
         ``TEST_START_MARGIN_SECONDS`` from every labeled edge and from the
-        recording's end, in order. The positions are drawn with a seed made
-        from ``TEST_START_SEED`` and the recording's fingerprint, so they
-        don't move when other recordings change. A recording with no such
-        position gets no test start inside a program.
+        recording's end, in order. Positions drawn twice, which happens when
+        the only room is a single moment, are tested once. The positions are
+        drawn with a seed made from ``TEST_START_SEED`` and the recording's
+        fingerprint, so they don't move when other recordings change. A
+        recording with no such position gets no test start inside a program.
     """
     in_breaks = [
         TestStart(
@@ -570,7 +571,7 @@ def test_starts(recording: LabeledRecording) -> tuple[TestStart, ...]:
         return tuple(in_breaks)
     rng = random.Random(f"{TEST_START_SEED}:{recording.entry.fingerprint}")
     count = max(len(in_breaks), 1)
-    in_programs = sorted(_draw(rng, room) for _ in range(count))
+    in_programs = sorted({_draw(rng, room) for _ in range(count)})
     return (*in_breaks, *(TestStart(at, State.PROGRAM) for at in in_programs))
 
 

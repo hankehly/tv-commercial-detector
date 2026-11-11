@@ -96,7 +96,7 @@ _Avoid_: end delay
 The time from when the detector starts, or its input resumes, until it reports what the labels say is on air at that moment.
 
 **Test start**:
-A moment in a recording where the benchmark starts a candidate cold to measure its startup delay: the middle of a long commercial break, or a spot inside a program away from any labeled edge. Every run picks the same ones.
+A moment in a recording where the benchmark starts a candidate cold to measure its startup delay: the middle of a long commercial break, or a moment inside a program away from any labeled edge. Every run picks the same ones.
 _Avoid_: starting point, probe point
 
 **Trial run**:

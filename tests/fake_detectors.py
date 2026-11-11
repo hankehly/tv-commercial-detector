@@ -124,13 +124,13 @@ class FakeCandidate:
         if isinstance(script, str):
             raise DetectorError(script)
         if (start_seconds, end_seconds) != (0.0, recording.length_seconds):
-            script = self._from(name, script, start_seconds, end_seconds)
+            script = self._partial_run(name, script, start_seconds, end_seconds)
         return CandidateReport(
             changes=tuple(StateChange(state, at) for state, at in script),
             processing_seconds=self.processing_seconds,
         )
 
-    def _from(
+    def _partial_run(
         self,
         name: str,
         script: list[tuple[State, float]],
