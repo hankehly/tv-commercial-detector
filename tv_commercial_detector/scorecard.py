@@ -27,7 +27,9 @@ Saved as JSON, one file per run::
           "errors": {},
           "verdicts": {"entry_delay_within_limit": "pass",
                        "exit_delay_within_limit": "pass",
-                       "missed_commercial_breaks": "fail"},
+                       "missed_commercial_breaks": "fail",
+                       "false_flips_per_hour": "pass",
+                       "processing_speed": "pass"},
           "verdict": "fail"
         }
       ]
@@ -207,6 +209,8 @@ CANDIDATE_MEASURE_LABELS = {
     "exit_delay_within_limit": f"Exit delay within {DELAY_LIMIT_SECONDS:g} s",
     "exit_delay_median": "Exit delay, median",
     "missed_commercial_breaks": "Missed commercial breaks",
+    "false_flips_per_hour": "False flips per hour",
+    "processing_speed": "Processing speed",
 }
 
 MEASURE_LABELS = {
@@ -281,8 +285,8 @@ def _cell(name: str, measure: Measure) -> str:
     -------
     str
         For example ``2 of 12``, ``95.0% of 20``, ``0.50 in 6.0 h``,
-        ``1.5 s (10)`` or ``-0.3 s (10)``; ``-`` stands for a value there is
-        nothing to measure.
+        ``0.120 s/s in 6.0 h``, ``1.5 s (10)`` or ``-0.3 s (10)``; ``-``
+        stands for a value there is nothing to measure.
     """
     if name == "missed_commercial_breaks":
         return f"{measure.value} of {measure.based_on['commercial_breaks']}"
@@ -292,6 +296,9 @@ def _cell(name: str, measure: Measure) -> str:
     if name == "false_flips_per_hour":
         value = "-" if measure.value is None else f"{measure.value:.2f}"
         return f"{value} in {measure.based_on['hours']:.1f} h"
+    if name == "processing_speed":
+        value = "-" if measure.value is None else f"{measure.value:.3f}"
+        return f"{value} s/s in {measure.based_on['hours']:.1f} h"
     count = measure.based_on["commercial_breaks"]
     if measure.value is None:
         return f"- ({count})"

@@ -51,12 +51,16 @@ def test_worked_example_entry_3_s_and_exit_4_s_are_both_within_the_bar(
         "exit_delay_within_limit": {"value": 1.0, "based_on": one},
         "exit_delay_median": {"value": 4.0, "based_on": one},
         "missed_commercial_breaks": {"value": 0, "based_on": one},
+        "false_flips_per_hour": {"value": 0.0, "based_on": {"hours": 1.0}},
+        "processing_speed": {"value": 0.0, "based_on": {"hours": 1.0}},
     }
     assert scored["per_recording"]["a.mp4"] == scored["overall"]
     assert scored["verdicts"] == {
         "entry_delay_within_limit": "pass",
         "exit_delay_within_limit": "pass",
         "missed_commercial_breaks": "pass",
+        "false_flips_per_hour": "pass",
+        "processing_speed": "pass",
     }
     assert scored["verdict"] == "pass"
     assert scored["errors"] == {}
@@ -316,6 +320,8 @@ def test_entry_delay_passes_when_95_percent_are_within_5_s_counting_5_s_as_withi
         "entry_delay_within_limit": verdict,
         "exit_delay_within_limit": "pass",
         "missed_commercial_breaks": "pass",
+        "false_flips_per_hour": "pass",
+        "processing_speed": "pass",
     }
     assert scored["verdict"] == verdict
 
@@ -348,6 +354,8 @@ def test_missed_commercial_breaks_pass_up_to_2_percent(
         "entry_delay_within_limit": "pass",
         "exit_delay_within_limit": "pass",
         "missed_commercial_breaks": verdict,
+        "false_flips_per_hour": "pass",
+        "processing_speed": "pass",
     }
     assert scored["verdict"] == verdict
 
@@ -521,6 +529,18 @@ def test_run_command_prints_candidates_with_pass_or_fail_and_look_ahead_without(
         "Exit delay within 5 s": ["100.0% of 1", "pass", "100.0% of 1", "- of 0"],
         "Exit delay, median": ["4.0 s (1)", "-", "4.0 s (1)", "- (0)"],
         "Missed commercial breaks": ["1 of 2", "fail", "0 of 1", "1 of 1"],
+        "False flips per hour": [
+            "0.00 in 2.0 h",
+            "pass",
+            "0.00 in 1.0 h",
+            "0.00 in 1.0 h",
+        ],
+        "Processing speed": [
+            "0.000 s/s in 2.0 h",
+            "pass",
+            "0.000 s/s in 1.0 h",
+            "0.000 s/s in 1.0 h",
+        ],
     }
     tool_table = lines[lines.index("tool (look-ahead)") + 1 : lines.index("")]
     assert tool_table[0].split() == ["Measure", "Overall", "a.mp4", "b.mp4"]
@@ -614,6 +634,8 @@ def test_measure_with_nothing_to_count_fails(recording_set: RecordingSet) -> Non
         "entry_delay_within_limit": "fail",
         "exit_delay_within_limit": "fail",
         "missed_commercial_breaks": "fail",
+        "false_flips_per_hour": "fail",
+        "processing_speed": "fail",
     }
     assert scored["verdict"] == "fail"
 
@@ -679,4 +701,230 @@ def test_exit_near_the_end_counts_only_reports_strictly_before_the_end(
     assert b["exit_delay_median"] == {
         "value": 0.0,
         "based_on": {"commercial_breaks": 1},
+    }
+
+
+def test_switch_to_unknown_while_settled_is_a_false_flip(
+    recording_set: RecordingSet,
+) -> None:
+    # Labels 60 to 180 s in an hour. The candidate settles on the program at
+    # 1 s. It switches to UNKNOWN at 30 s, a false flip, and back to the
+    # program at 31 s, which isn't. After leaving the commercial break at
+    # 184 s it switches to UNKNOWN again at 1000 s, a second false flip, and
+    # back at 1005 s. 2 in 1 h is over 1 per hour and fails.
+    recording_set.add("a.mp4", 3600.0, [("00:01:00", "00:03:00")])
+    candidate = FakeCandidate(
+        "fake",
+        {
+            "a.mp4": [
+                (PROGRAM, 1.0),
+                (UNKNOWN, 30.0),
+                (PROGRAM, 31.0),
+                (CB, 63.0),
+                (PROGRAM, 184.0),
+                (UNKNOWN, 1000.0),
+                (PROGRAM, 1005.0),
+            ]
+        },
+    )
+
+    scorecard = recording_set.run(candidate)
+
+    [scored] = scorecard["detectors"]
+    assert scored["overall"]["false_flips_per_hour"] == {
+        "value": 2.0,
+        "based_on": {"hours": 1.0},
+    }
+    assert scored["verdicts"]["false_flips_per_hour"] == "fail"
+    assert scored["verdict"] == "fail"
+
+
+def test_changes_while_settling_are_not_false_flips(
+    recording_set: RecordingSet,
+) -> None:
+    # Labels 60 to 180 s. At the start of the run the candidate reports a
+    # commercial break at 2 s and UNKNOWN at 3 s before its first report
+    # matching the labels, the program at 5 s. After the labeled start it goes
+    # program -> UNKNOWN -> commercial break, and after the labeled end
+    # commercial break -> UNKNOWN -> commercial break -> program. All of it
+    # is settling, so there are no false flips, and the delays cover it.
+    recording_set.add("a.mp4", 3600.0, [("00:01:00", "00:03:00")])
+    candidate = FakeCandidate(
+        "fake",
+        {
+            "a.mp4": [
+                (CB, 2.0),
+                (UNKNOWN, 3.0),
+                (PROGRAM, 5.0),
+                (UNKNOWN, 61.0),
+                (CB, 63.0),
+                (UNKNOWN, 180.5),
+                (CB, 181.0),
+                (PROGRAM, 184.0),
+            ]
+        },
+    )
+
+    scorecard = recording_set.run(candidate)
+
+    overall = scorecard["detectors"][0]["overall"]
+    assert overall["false_flips_per_hour"]["value"] == 0.0
+    assert overall["entry_delay_median"]["value"] == 3.0
+    assert overall["exit_delay_median"]["value"] == 4.0
+
+
+def test_settling_starts_half_a_second_before_each_labeled_edge(
+    recording_set: RecordingSet,
+) -> None:
+    # Labels 60 to 180 s. UNKNOWN at 59.4 s, 0.6 s before the labeled start,
+    # is a false flip while settled on the program. UNKNOWN at 179.5 s,
+    # exactly 0.5 s before the labeled end, is settling.
+    recording_set.add("a.mp4", 3600.0, [("00:01:00", "00:03:00")])
+    candidate = FakeCandidate(
+        "fake",
+        {
+            "a.mp4": [
+                (PROGRAM, 1.0),
+                (UNKNOWN, 59.4),
+                (CB, 61.0),
+                (UNKNOWN, 179.5),
+                (PROGRAM, 181.0),
+            ]
+        },
+    )
+
+    scorecard = recording_set.run(candidate)
+
+    overall = scorecard["detectors"][0]["overall"]
+    assert overall["false_flips_per_hour"]["value"] == 1.0
+
+
+def test_dropping_the_labeled_state_after_reaching_it_early_is_a_false_flip(
+    recording_set: RecordingSet,
+) -> None:
+    # Labels 60 to 180 s. The commercial break reported at 59.5 s is on time,
+    # so the candidate is settled there. Going back to the program at 59.9 s
+    # is a false flip: the 0.5 s allowance moved the edge, not the candidate.
+    recording_set.add("a.mp4", 3600.0, [("00:01:00", "00:03:00")])
+    candidate = FakeCandidate(
+        "fake",
+        {"a.mp4": [(PROGRAM, 1.0), (CB, 59.5), (PROGRAM, 59.9), (CB, 62.0)]},
+    )
+
+    scorecard = recording_set.run(candidate)
+
+    overall = scorecard["detectors"][0]["overall"]
+    assert overall["entry_delay_median"]["value"] == 0.0
+    assert overall["false_flips_per_hour"]["value"] == 1.0
+
+
+def test_commercial_free_recording_counts_towards_false_flips(
+    recording_set: RecordingSet,
+) -> None:
+    # a: an hour with a commercial break entered and left on time, no false
+    #    flips. b: an hour with no commercial breaks, where the candidate
+    #    reports a commercial break at 1000 s: one false flip. Pooled, 1 in
+    #    2 h is 0.5 per hour. Adding c, a commercial-free half hour with one
+    #    false flip, makes 2 in 2.5 h: 0.8 per hour. Within 1 per hour, both
+    #    pass.
+    recording_set.add("a.mp4", 3600.0, [("00:01:00", "00:03:00")])
+    recording_set.add("b.mp4", 3600.0, [])
+    recording_set.add("c.mp4", 1800.0, [])
+    candidate = FakeCandidate(
+        "fake",
+        {
+            "a.mp4": [(PROGRAM, 1.0), (CB, 60.0), (PROGRAM, 180.0)],
+            "b.mp4": [(PROGRAM, 1.0), (CB, 1000.0), (PROGRAM, 1010.0)],
+            "c.mp4": [(PROGRAM, 1.0), (UNKNOWN, 900.0)],
+        },
+    )
+
+    scorecard = recording_set.run(candidate)
+
+    [scored] = scorecard["detectors"]
+    flips = {
+        name: measures["false_flips_per_hour"]
+        for name, measures in scored["per_recording"].items()
+    }
+    assert flips == {
+        "a.mp4": {"value": 0.0, "based_on": {"hours": 1.0}},
+        "b.mp4": {"value": 1.0, "based_on": {"hours": 1.0}},
+        "c.mp4": {"value": 2.0, "based_on": {"hours": 0.5}},
+    }
+    assert scored["overall"]["false_flips_per_hour"] == {
+        "value": 0.8,
+        "based_on": {"hours": 2.5},
+    }
+    assert scored["verdicts"]["false_flips_per_hour"] == "pass"
+
+
+def test_one_false_flip_per_hour_is_within_the_bar(
+    recording_set: RecordingSet,
+) -> None:
+    # Three hours, no commercial breaks, three false flips: exactly 1 per hour.
+    recording_set.add("a.mp4", 10800.0, [])
+    script = [(PROGRAM, 1.0)]
+    for at in [1000.0, 5000.0, 9000.0]:
+        script += [(CB, at), (PROGRAM, at + 10.0)]
+    candidate = FakeCandidate("fake", {"a.mp4": script})
+
+    scorecard = recording_set.run(candidate)
+
+    [scored] = scorecard["detectors"]
+    assert scored["overall"]["false_flips_per_hour"]["value"] == 1.0
+    assert scored["verdicts"]["false_flips_per_hour"] == "pass"
+
+
+@pytest.mark.parametrize(
+    ("processing_seconds", "speed", "verdict"),
+    [(1800.0, 0.5, "pass"), (1800.36, 0.5001, "fail")],
+)
+def test_processing_speed_passes_up_to_half_a_second_per_second_of_broadcast(
+    recording_set: RecordingSet, processing_seconds: float, speed: float, verdict: str
+) -> None:
+    # An hour processed in 1800 s is exactly 0.5 s per second of broadcast,
+    # on the limit; 1800.36 s is 0.5001 s and over it.
+    recording_set.add("a.mp4", 3600.0, [("00:01:00", "00:03:00")])
+    candidate = FakeCandidate(
+        "fake",
+        {"a.mp4": [(PROGRAM, 1.0), (CB, 60.0), (PROGRAM, 180.0)]},
+        processing_seconds=processing_seconds,
+    )
+
+    scorecard = recording_set.run(candidate)
+
+    [scored] = scorecard["detectors"]
+    assert scored["overall"]["processing_speed"] == {
+        "value": pytest.approx(speed),
+        "based_on": {"hours": 1.0},
+    }
+    assert scored["verdicts"]["processing_speed"] == verdict
+    assert scored["verdict"] == verdict
+
+
+def test_processing_speed_pools_every_recording(
+    recording_set: RecordingSet,
+) -> None:
+    # Each full run takes 900 s: a, an hour, at 0.25 s per second and b, half
+    # an hour, at 0.5 s per second. Pooled, 1800 s for 5400 s of broadcast is
+    # a third of a second per second, not the average of the two.
+    recording_set.add("a.mp4", 3600.0, [])
+    recording_set.add("b.mp4", 1800.0, [])
+    candidate = FakeCandidate(
+        "fake",
+        {"a.mp4": [(PROGRAM, 1.0)], "b.mp4": [(PROGRAM, 1.0)]},
+        processing_seconds=900.0,
+    )
+
+    scorecard = recording_set.run(candidate)
+
+    [scored] = scorecard["detectors"]
+    speeds = {
+        name: measures["processing_speed"]["value"]
+        for name, measures in scored["per_recording"].items()
+    }
+    assert speeds == {"a.mp4": 0.25, "b.mp4": 0.5}
+    assert scored["overall"]["processing_speed"] == {
+        "value": pytest.approx(1 / 3),
+        "based_on": {"hours": 1.5},
     }

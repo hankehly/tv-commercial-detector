@@ -42,6 +42,17 @@ Starting in the last 5 s   Left out of every measure.
 Ending in the last 5 s,    No exit delay, unless ``PROGRAM`` is reported before
 or still running at the    the recording ends.
 end
+Settling                   From the start of the run until the state first
+                           matches the labels, and from 0.5 s before each
+                           labeled edge until the state reaches the new labeled
+                           one, at the moment the delay is measured to. Every
+                           labeled edge counts, even in the last 5 s.
+False flip                 While settled, a change to any state other than the
+                           labeled one, ``UNKNOWN`` included; the labeled one
+                           changes 0.5 s before each edge. A return to it isn't
+                           counted. Counted per hour of recording scored.
+Processing speed           The full run's processing time divided by the
+                           recording's length.
 =========================  ====================================================
 
 The pass bar, judged on the overall figures, with a value exactly on a limit
@@ -55,6 +66,8 @@ Entry delay                 At most 5 s for at least 95% of labeled commercial
 Exit delay                  At most 5 s for at least 95% of the commercial
                             breaks the candidate entered.
 Missed commercial breaks    At most 2% of labeled commercial breaks.
+False flips                 At most 1 per hour of recording scored.
+Processing speed            At most 0.5 s to process each second of broadcast.
 ==========================  ===================================================
 
 A measure with nothing to count, for example when the candidate failed on
@@ -71,6 +84,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 
 from tv_commercial_detector.detectors import CandidateReport, LookAheadReport, State
+from tv_commercial_detector.labels import CommercialBreak
 from tv_commercial_detector.recording_set import LabeledRecording
 
 MATCH_OVERLAP_SECONDS = 0.5
@@ -298,6 +312,12 @@ DELAY_SHARE_PERCENT = 95
 MISSED_PERCENT = 2
 """The largest share of labeled commercial breaks a candidate may miss."""
 
+FALSE_FLIPS_PER_HOUR_LIMIT = 1.0
+"""The most false flips per hour of recording scored that pass the bar."""
+
+PROCESSING_SPEED_LIMIT = 0.5
+"""The most seconds a candidate may take to process each second of broadcast."""
+
 END_MARGIN_SECONDS = 5.0
 """How close to a recording's end an edge is too late to judge a delay on."""
 
@@ -309,8 +329,10 @@ class CandidateTally:
     ``entry_counted`` and ``exit_counted`` are how many commercial breaks each
     delay is counted over; ``entry_delays`` and ``exit_delays`` hold the delays
     that could be measured, so a missed commercial break counts towards
-    ``entry_counted`` without a delay. Tallies for several recordings add up,
-    so overall figures pool them.
+    ``entry_counted`` without a delay. ``hours`` is the length of the
+    recordings scored and ``processing_seconds`` the time their full runs
+    took. Tallies for several recordings add up, so overall
+    figures pool them.
     """
 
     commercial_breaks: int = 0
@@ -319,6 +341,9 @@ class CandidateTally:
     entry_delays: tuple[float, ...] = ()
     exit_counted: int = 0
     exit_delays: tuple[float, ...] = ()
+    false_flips: int = 0
+    hours: float = 0.0
+    processing_seconds: float = 0.0
 
     def __add__(self, other: CandidateTally) -> CandidateTally:
         """Pool two tallies.
@@ -340,7 +365,20 @@ class CandidateTally:
             entry_delays=self.entry_delays + other.entry_delays,
             exit_counted=self.exit_counted + other.exit_counted,
             exit_delays=self.exit_delays + other.exit_delays,
+            false_flips=self.false_flips + other.false_flips,
+            hours=self.hours + other.hours,
+            processing_seconds=self.processing_seconds + other.processing_seconds,
         )
+
+    @property
+    def false_flips_per_hour(self) -> float | None:
+        """False flips per hour of recording scored, or ``None`` for no hours."""
+        return self.false_flips / self.hours if self.hours else None
+
+    @property
+    def processing_speed(self) -> float | None:
+        """Seconds of processing per second of broadcast, or ``None`` for none."""
+        return self.processing_seconds / (self.hours * 3600) if self.hours else None
 
     @property
     def entry_within_limit(self) -> int:
@@ -360,7 +398,9 @@ class CandidateTally:
         dict[str, Measure]
             For entry and exit delay, the share of commercial breaks within the
             limit and the median of the delays that could be measured, in
-            seconds; and the number of missed commercial breaks.
+            seconds; the number of missed commercial breaks; false flips per
+            hour of recording scored; and processing speed, in seconds of
+            processing per second of broadcast.
         """
         return {
             "entry_delay_within_limit": Measure(
@@ -382,6 +422,10 @@ class CandidateTally:
             "missed_commercial_breaks": Measure(
                 self.missed, {"commercial_breaks": self.commercial_breaks}
             ),
+            "false_flips_per_hour": Measure(
+                self.false_flips_per_hour, {"hours": self.hours}
+            ),
+            "processing_speed": Measure(self.processing_speed, {"hours": self.hours}),
         }
 
     def verdicts(self) -> dict[str, bool]:
@@ -403,6 +447,10 @@ class CandidateTally:
             and self.exit_within_limit * 100 >= DELAY_SHARE_PERCENT * self.exit_counted,
             "missed_commercial_breaks": self.commercial_breaks > 0
             and self.missed * 100 <= MISSED_PERCENT * self.commercial_breaks,
+            "false_flips_per_hour": _at_most(
+                self.false_flips_per_hour, FALSE_FLIPS_PER_HOUR_LIMIT
+            ),
+            "processing_speed": _at_most(self.processing_speed, PROCESSING_SPEED_LIMIT),
         }
 
 
@@ -459,7 +507,56 @@ def tally_candidate(
         entry_delays=tuple(entry_delays),
         exit_counted=exit_counted,
         exit_delays=tuple(exit_delays),
+        false_flips=_false_flips(timeline, labeled),
+        hours=recording.hours,
+        processing_seconds=report.processing_seconds,
     )
+
+
+def _false_flips(timeline: _Timeline, labeled: Sequence[CommercialBreak]) -> int:
+    """Count a full run's false flips.
+
+    The labels split the run into stretches, each with one labeled state: from
+    the start of the run, and from ``LABELING_IMPRECISION_SECONDS`` before
+    each labeled edge, until the next stretch. In each, the candidate settles
+    once its state reaches the labeled one, at the moment the entry or exit
+    delay is measured to; at the start of the run, that is its first report
+    matching the labels. Once settled, every change to another state is a
+    false flip; a return to the labeled state isn't.
+
+    Parameters
+    ----------
+    timeline : _Timeline
+        The candidate's state over the run.
+    labeled : Sequence[CommercialBreak]
+        The labeled commercial breaks, sorted, not touching. Every one counts,
+        even one starting in the last 5 s, since its edges still explain a
+        change.
+
+    Returns
+    -------
+    int
+        How many false flips the run has.
+    """
+    under_way = bool(labeled) and labeled[0].start_seconds <= 0.0
+    stretches = [(0.0, State.COMMERCIAL_BREAK if under_way else State.PROGRAM)]
+    for labeled_break in labeled:
+        if labeled_break.start_seconds > 0.0:
+            stretches.append((labeled_break.start_seconds, State.COMMERCIAL_BREAK))
+        stretches.append((labeled_break.end_seconds, State.PROGRAM))
+    starts = [0.0] + [
+        _offset(edge, LABELING_IMPRECISION_SECONDS) for edge, _ in stretches[1:]
+    ]
+    false_flips = 0
+    for (edge, state), until in zip(stretches, starts[1:] + [math.inf]):
+        settled = timeline.reached(state, edge, until)
+        if settled is None or settled >= until:
+            continue
+        false_flips += sum(
+            settled < at < until and reported != state
+            for at, reported in timeline.changes
+        )
+    return false_flips
 
 
 @dataclass(frozen=True)
@@ -662,6 +759,25 @@ def _within_limit(delays: Sequence[float]) -> int:
         How many are at most ``DELAY_LIMIT_SECONDS``.
     """
     return sum(delay <= DELAY_LIMIT_SECONDS for delay in delays)
+
+
+def _at_most(value: float | None, limit: float) -> bool:
+    """Tell whether a measured value is within a limit.
+
+    Parameters
+    ----------
+    value : float | None
+        The value, or ``None`` when there was nothing to measure.
+    limit : float
+        The limit; a value exactly on it is within it.
+
+    Returns
+    -------
+    bool
+        ``True`` if the value, to the microsecond so float noise can't tip it
+        over, is at most the limit; ``False`` when there is no value.
+    """
+    return value is not None and round(value, 6) <= limit
 
 
 def _share(count: int, total: int) -> float | None:
