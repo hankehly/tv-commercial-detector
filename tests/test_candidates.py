@@ -969,3 +969,46 @@ def test_changes_reported_after_the_recording_ends_are_not_false_flips(
 
     overall = scorecard["detectors"][0]["overall"]
     assert overall["false_flips_per_hour"]["value"] == 0.0
+
+
+def test_reporting_the_same_state_again_is_not_another_false_flip(
+    recording_set: RecordingSet,
+) -> None:
+    # An hour with no commercial breaks. The commercial break reported at
+    # 30 s is a false flip; reporting it again at 40 s changes nothing.
+    recording_set.add("a.mp4", 3600.0, [])
+    candidate = FakeCandidate(
+        "fake",
+        {"a.mp4": [(PROGRAM, 1.0), (CB, 30.0), (CB, 40.0), (PROGRAM, 60.0)]},
+    )
+
+    scorecard = recording_set.run(candidate)
+
+    [scored] = scorecard["detectors"]
+    assert scored["overall"]["false_flips_per_hour"]["value"] == 1.0
+    assert scored["verdicts"]["false_flips_per_hour"] == "pass"
+
+
+def test_settling_boundary_holds_at_fractional_label_times(
+    recording_set: RecordingSet,
+) -> None:
+    # Labels 64.1 to 180 s. UNKNOWN reported at 64.1 - 0.5 s, which float
+    # arithmetic makes 63.599999999999994 s, is exactly 0.5 s before the
+    # labeled start, so it is settling, not a false flip.
+    recording_set.add("a.mp4", 3600.0, [("00:01:04.1", "00:03:00")])
+    candidate = FakeCandidate(
+        "fake",
+        {
+            "a.mp4": [
+                (PROGRAM, 1.0),
+                (UNKNOWN, 64.1 - 0.5),
+                (CB, 66.0),
+                (PROGRAM, 180.0),
+            ]
+        },
+    )
+
+    scorecard = recording_set.run(candidate)
+
+    overall = scorecard["detectors"][0]["overall"]
+    assert overall["false_flips_per_hour"]["value"] == 0.0

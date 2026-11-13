@@ -618,11 +618,12 @@ class _Timeline:
         Returns
         -------
         State
-            The state last reported at or before it, or ``UNKNOWN``.
+            The state last reported at or before it, to the microsecond, or
+            ``UNKNOWN``.
         """
         state = State.UNKNOWN
         for at, reported in self.changes:
-            if at > time:
+            if _offset(at, time) > 0:
                 break
             state = reported
         return state
@@ -673,9 +674,10 @@ class _Timeline:
         float | None
             ``start`` itself if the state is already the one looked for there,
             otherwise the first change to it in the stretch; ``None`` if there
-            is no such moment.
+            is no such moment. Times are compared to the microsecond, so float
+            noise can't move a change across either end.
         """
-        if start >= before:
+        if _offset(start, before) >= 0:
             return None
         if self.state_at(start) == state:
             return start
@@ -683,7 +685,9 @@ class _Timeline:
             (
                 at
                 for at, reported in self.changes
-                if start < at < before and reported == state
+                if _offset(at, start) > 0
+                and _offset(at, before) < 0
+                and reported == state
             ),
             None,
         )
@@ -703,12 +707,19 @@ class _Timeline:
         Returns
         -------
         int
-            How many changes reported after ``after`` and before ``before``
-            are to another state.
+            How many changes reported after ``after`` and before ``before``,
+            to the microsecond, are to another state. Reporting the state the
+            candidate is already in again isn't a change.
         """
-        return sum(
-            after < at < before and reported != state for at, reported in self.changes
-        )
+        count = 0
+        previous = State.UNKNOWN
+        for at, reported in self.changes:
+            if _offset(at, before) >= 0:
+                break
+            if _offset(at, after) > 0 and reported not in (state, previous):
+                count += 1
+            previous = reported
+        return count
 
     def reached(self, state: State, edge: float, before: float) -> float | None:
         """Return when the state reaches a given one at or after a labeled edge.
