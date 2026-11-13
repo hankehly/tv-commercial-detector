@@ -294,3 +294,23 @@ def test_trial_run_that_cannot_be_scored_is_an_error_for_its_recording(
         "value": 1.0,
         "based_on": {"test_starts": 1},
     }
+
+
+def test_commercial_break_test_start_needs_the_whole_trial_run_inside_the_recording(
+    recording_set: RecordingSet,
+) -> None:
+    # Both recordings are 599.95 s long, and a label may end at the length
+    # rounded up to the next tenth, 600.0 s.
+    # a: 570 to 600 s puts its midpoint at 585 s, and a trial run from there
+    #    would end at 600 s, past the end: no test start in it.
+    # b: 569.9 to 600 s puts its midpoint at 584.95 s, so a trial run from
+    #    there ends exactly at the end: it gets a test start.
+    recording_set.add("a.mp4", 599.95, [("00:09:30", "00:10:00")])
+    recording_set.add("b.mp4", 599.95, [("00:09:29.9", "00:10:00")])
+    script = [(PROGRAM, 0.0), (CB, 570.0)]
+    candidate = FakeCandidate("fake", {"a.mp4": script, "b.mp4": script})
+
+    recording_set.run(candidate)
+
+    in_breaks = [run for run in trial_runs(candidate) if run[1] > 555.0]
+    assert in_breaks == [("b.mp4", 584.95, 599.95)]

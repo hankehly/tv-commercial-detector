@@ -50,7 +50,8 @@ Startup delay comes from a trial run of 15 s of broadcast from each test start:
 Rule                       How it is chosen or counted
 =========================  ====================================================
 In commercial breaks       One test start at the midpoint of each labeled
-                           commercial break at least 30 s long.
+                           commercial break at least 30 s long, unless its
+                           trial run would end past the recording's end.
 In programs                As many again, at least one per recording, at random
                            positions at least 15 s from every labeled edge and
                            from the recording's end, seeded so every run picks
@@ -548,7 +549,9 @@ def test_starts(recording: LabeledRecording) -> tuple[TestStart, ...]:
     -------
     tuple[TestStart, ...]
         One at the midpoint of each labeled commercial break at least
-        ``TEST_START_BREAK_SECONDS`` long, in order; then as many again inside
+        ``TEST_START_BREAK_SECONDS`` long, in order, unless its trial run
+        would end past the recording's end, which a label ending at the
+        length rounded up to the next tenth allows; then as many again inside
         programs, at least one, at random positions at least
         ``TEST_START_MARGIN_SECONDS`` from every labeled edge and from the
         recording's end, in order. Positions drawn twice, which happens when
@@ -557,14 +560,17 @@ def test_starts(recording: LabeledRecording) -> tuple[TestStart, ...]:
         fingerprint, so they don't move when other recordings change. A
         recording with no such position gets no test start inside a program.
     """
-    in_breaks = [
-        TestStart(
-            (labeled.start_seconds + labeled.end_seconds) / 2,
-            State.COMMERCIAL_BREAK,
-        )
+    length = recording.entry.length_seconds
+    midpoints = [
+        (labeled.start_seconds + labeled.end_seconds) / 2
         for labeled in recording.label_file.commercial_breaks
         if _offset(labeled.end_seconds, labeled.start_seconds)
         >= TEST_START_BREAK_SECONDS
+    ]
+    in_breaks = [
+        TestStart(midpoint, State.COMMERCIAL_BREAK)
+        for midpoint in midpoints
+        if _offset(length, midpoint) >= TRIAL_SECONDS
     ]
     room = _program_room(recording)
     if not room:
