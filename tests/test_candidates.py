@@ -858,11 +858,15 @@ def test_commercial_free_recording_counts_towards_false_flips(
     assert scored["verdicts"]["false_flips_per_hour"] == "pass"
 
 
+@pytest.mark.parametrize(
+    ("length", "verdict"), [(10800.0, "pass"), (10799.999, "fail")]
+)
 def test_one_false_flip_per_hour_is_within_the_bar(
-    recording_set: RecordingSet,
+    recording_set: RecordingSet, length: float, verdict: str
 ) -> None:
-    # Three hours, no commercial breaks, three false flips: exactly 1 per hour.
-    recording_set.add("a.mp4", 10800.0, [])
+    # Three hours, no commercial breaks, three false flips: exactly 1 per hour
+    # passes. 1 ms less recording makes it 1.0000001 per hour, over the limit.
+    recording_set.add("a.mp4", length, [])
     script = [(PROGRAM, 1.0)]
     for at in [1000.0, 5000.0, 9000.0]:
         script += [(CB, at), (PROGRAM, at + 10.0)]
@@ -871,19 +875,20 @@ def test_one_false_flip_per_hour_is_within_the_bar(
     scorecard = recording_set.run(candidate)
 
     [scored] = scorecard["detectors"]
-    assert scored["overall"]["false_flips_per_hour"]["value"] == 1.0
-    assert scored["verdicts"]["false_flips_per_hour"] == "pass"
+    assert scored["overall"]["false_flips_per_hour"]["value"] == pytest.approx(1.0)
+    assert scored["verdicts"]["false_flips_per_hour"] == verdict
 
 
 @pytest.mark.parametrize(
     ("processing_seconds", "speed", "verdict"),
-    [(1800.0, 0.5, "pass"), (1800.36, 0.5001, "fail")],
+    [(1800.0, 0.5, "pass"), (1800.36, 0.5001, "fail"), (1800.001, 0.5000003, "fail")],
 )
 def test_processing_speed_passes_up_to_half_a_second_per_second_of_broadcast(
     recording_set: RecordingSet, processing_seconds: float, speed: float, verdict: str
 ) -> None:
     # An hour processed in 1800 s is exactly 0.5 s per second of broadcast,
-    # on the limit; 1800.36 s is 0.5001 s and over it.
+    # on the limit; 1800.36 s is 0.5001 s and over it, and so is 1800.001 s,
+    # 0.0000003 s over: only float noise is forgiven, not a real excess.
     recording_set.add("a.mp4", 3600.0, [("00:01:00", "00:03:00")])
     candidate = FakeCandidate(
         "fake",

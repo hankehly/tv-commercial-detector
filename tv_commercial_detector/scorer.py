@@ -842,10 +842,13 @@ def _at_most(value: float | None, limit: float) -> bool:
     Returns
     -------
     bool
-        ``True`` if the value, to six decimal places so float noise can't tip
-        it over, is at most the limit; ``False`` when there is no value.
+        ``True`` if the value is at most the limit, or differs from it only by
+        float noise (a relative error of one in a billion); ``False`` when
+        there is no value. A real excess, however small, is over the limit.
     """
-    return value is not None and round(value, 6) <= limit
+    return value is not None and (
+        value <= limit or math.isclose(value, limit, rel_tol=1e-9)
+    )
 
 
 def _per_hour(count: int, hours: float) -> float | None:
