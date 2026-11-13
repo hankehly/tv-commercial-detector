@@ -18,6 +18,12 @@ from tv_commercial_detector.media_probe import ProbeResult
 STARTED_AT = datetime(2026, 11, 8, 14, 3, 22, tzinfo=timezone(timedelta(hours=9)))
 
 
+def clock(seconds: float) -> str:
+    """Write a whole number of seconds as a label time, hh:mm:ss."""
+    minutes, secs = divmod(int(seconds), 60)
+    return f"{minutes // 60:02d}:{minutes % 60:02d}:{secs:02d}"
+
+
 class FakeProbe:
     """Media probe that finds both tracks and the listed length in every recording."""
 

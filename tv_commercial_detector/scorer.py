@@ -44,6 +44,25 @@ or still running at the    the recording ends.
 end
 =========================  ====================================================
 
+Startup delay comes from a trial run of 15 s of broadcast from each test start:
+
+=========================  ====================================================
+Rule                       How it is chosen or counted
+=========================  ====================================================
+In commercial breaks       One test start at the midpoint of each labeled
+                           commercial break at least 30 s long, unless its
+                           trial run would end past the recording's end.
+In programs                As many again, at least one per recording, at random
+                           positions at least 15 s from every labeled edge and
+                           from the recording's end, seeded so every run picks
+                           the same ones. A position drawn twice is tested
+                           once; a recording with no such position gets none.
+Startup delay              From the test start until the candidate first
+                           reports what the labels say is on air, before the
+                           trial run ends. If it never does, it counts as over
+                           10 s.
+=========================  ====================================================
+
 The pass bar, judged on the overall figures, with a value exactly on a limit
 counting as within it:
 
@@ -55,17 +74,19 @@ Entry delay                 At most 5 s for at least 95% of labeled commercial
 Exit delay                  At most 5 s for at least 95% of the commercial
                             breaks the candidate entered.
 Missed commercial breaks    At most 2% of labeled commercial breaks.
+Startup delay               At most 10 s for at least 95% of test starts.
 ==========================  ===================================================
 
 A measure with nothing to count, for example when the candidate failed on
 every recording, fails. A candidate passes overall only if it passes every
 measure.
 
-Figures for several recordings pool every commercial break and hour across them;
-they aren't averages of per-recording figures.
+Figures for several recordings pool every commercial break, test start and hour
+across them; they aren't averages of per-recording figures.
 """
 
 import math
+import random
 import statistics
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -301,6 +322,21 @@ MISSED_PERCENT = 2
 END_MARGIN_SECONDS = 5.0
 """How close to a recording's end an edge is too late to judge a delay on."""
 
+STARTUP_LIMIT_SECONDS = 10.0
+"""Startup delays pass the bar when they are at most this long."""
+
+TRIAL_SECONDS = 15.0
+"""How much broadcast each trial run gets, from its test start."""
+
+TEST_START_BREAK_SECONDS = 30.0
+"""How long a labeled commercial break must be to get a test start."""
+
+TEST_START_MARGIN_SECONDS = 15.0
+"""How far a test start inside a program stays from labeled edges and the end."""
+
+TEST_START_SEED = "startup"
+"""With a recording's fingerprint, seeds where its program test starts go."""
+
 
 @dataclass(frozen=True)
 class CandidateTally:
@@ -319,6 +355,8 @@ class CandidateTally:
     entry_delays: tuple[float, ...] = ()
     exit_counted: int = 0
     exit_delays: tuple[float, ...] = ()
+    test_starts: int = 0
+    startup_delays: tuple[float, ...] = ()
 
     def __add__(self, other: CandidateTally) -> CandidateTally:
         """Pool two tallies.
@@ -340,6 +378,8 @@ class CandidateTally:
             entry_delays=self.entry_delays + other.entry_delays,
             exit_counted=self.exit_counted + other.exit_counted,
             exit_delays=self.exit_delays + other.exit_delays,
+            test_starts=self.test_starts + other.test_starts,
+            startup_delays=self.startup_delays + other.startup_delays,
         )
 
     @property
@@ -352,6 +392,11 @@ class CandidateTally:
         """How many commercial breaks were exited within the delay limit."""
         return _within_limit(self.exit_delays)
 
+    @property
+    def startup_within_limit(self) -> int:
+        """How many test starts had the labeled state reported within the limit."""
+        return _within_limit(self.startup_delays, STARTUP_LIMIT_SECONDS)
+
     def measures(self) -> dict[str, Measure]:
         """Turn the tally into the candidate measures.
 
@@ -360,7 +405,9 @@ class CandidateTally:
         dict[str, Measure]
             For entry and exit delay, the share of commercial breaks within the
             limit and the median of the delays that could be measured, in
-            seconds; and the number of missed commercial breaks.
+            seconds; the number of missed commercial breaks; and for startup
+            delay, the share of test starts within the limit and the median
+            of the delays that could be measured, in seconds.
         """
         return {
             "entry_delay_within_limit": Measure(
@@ -381,6 +428,14 @@ class CandidateTally:
             ),
             "missed_commercial_breaks": Measure(
                 self.missed, {"commercial_breaks": self.commercial_breaks}
+            ),
+            "startup_delay_within_limit": Measure(
+                _share(self.startup_within_limit, self.test_starts),
+                {"test_starts": self.test_starts},
+            ),
+            "startup_delay_median": Measure(
+                _median(self.startup_delays),
+                {"test_starts": len(self.startup_delays)},
             ),
         }
 
@@ -403,6 +458,9 @@ class CandidateTally:
             and self.exit_within_limit * 100 >= DELAY_SHARE_PERCENT * self.exit_counted,
             "missed_commercial_breaks": self.commercial_breaks > 0
             and self.missed * 100 <= MISSED_PERCENT * self.commercial_breaks,
+            "startup_delay_within_limit": self.test_starts > 0
+            and self.startup_within_limit * 100
+            >= DELAY_SHARE_PERCENT * self.test_starts,
         }
 
 
@@ -460,6 +518,157 @@ def tally_candidate(
         exit_counted=exit_counted,
         exit_delays=tuple(exit_delays),
     )
+
+
+@dataclass(frozen=True)
+class TestStart:
+    """Where a trial run starts, and what the labels say is on air there.
+
+    Nothing labeled changes during the trial run, so ``state`` holds
+    throughout it.
+    """
+
+    seconds: float
+    state: State
+
+    @property
+    def end_seconds(self) -> float:
+        """Where the trial run ends."""
+        return self.seconds + TRIAL_SECONDS
+
+
+def test_starts(recording: LabeledRecording) -> tuple[TestStart, ...]:
+    """Choose a recording's test starts, the same ones on every run.
+
+    Parameters
+    ----------
+    recording : LabeledRecording
+        The recording and its labels.
+
+    Returns
+    -------
+    tuple[TestStart, ...]
+        One at the midpoint of each labeled commercial break at least
+        ``TEST_START_BREAK_SECONDS`` long, in order, unless its trial run
+        would end past the recording's end, which a label ending at the
+        length rounded up to the next tenth allows; then as many again inside
+        programs, at least one, at random positions at least
+        ``TEST_START_MARGIN_SECONDS`` from every labeled edge and from the
+        recording's end, in order. Positions drawn twice, which happens when
+        the only room is a single moment, are tested once. The positions are
+        drawn with a seed made from ``TEST_START_SEED`` and the recording's
+        fingerprint, so they don't move when other recordings change. A
+        recording with no such position gets no test start inside a program.
+    """
+    length = recording.entry.length_seconds
+    midpoints = [
+        (labeled.start_seconds + labeled.end_seconds) / 2
+        for labeled in recording.label_file.commercial_breaks
+        if _offset(labeled.end_seconds, labeled.start_seconds)
+        >= TEST_START_BREAK_SECONDS
+    ]
+    in_breaks = [
+        TestStart(midpoint, State.COMMERCIAL_BREAK)
+        for midpoint in midpoints
+        if _offset(length, midpoint) >= TRIAL_SECONDS
+    ]
+    room = _program_room(recording)
+    if not room:
+        return tuple(in_breaks)
+    rng = random.Random(f"{TEST_START_SEED}:{recording.entry.fingerprint}")
+    count = max(len(in_breaks), 1)
+    in_programs = sorted({_draw(rng, room) for _ in range(count)})
+    return (*in_breaks, *(TestStart(at, State.PROGRAM) for at in in_programs))
+
+
+def _program_room(recording: LabeledRecording) -> list[tuple[float, float]]:
+    """Return the stretches of program where a test start may go.
+
+    Parameters
+    ----------
+    recording : LabeledRecording
+        The recording and its labels.
+
+    Returns
+    -------
+    list[tuple[float, float]]
+        Each ``(earliest, latest)`` stretch, in order, at least
+        ``TEST_START_MARGIN_SECONDS`` from every labeled edge and from the
+        recording's end. A stretch may be a single moment.
+    """
+    margin = TEST_START_MARGIN_SECONDS
+    length = recording.entry.length_seconds
+    room = []
+    program_from = 0.0
+    edges = [
+        (labeled.start_seconds, labeled.end_seconds)
+        for labeled in recording.label_file.commercial_breaks
+    ]
+    for start, end in [*edges, (length, length)]:
+        earliest = program_from + margin if program_from > 0.0 else 0.0
+        latest = start - margin
+        if _offset(latest, earliest) >= 0.0:
+            room.append((earliest, latest))
+        program_from = end
+    return room
+
+
+def _draw(rng: random.Random, room: list[tuple[float, float]]) -> float:
+    """Draw a position evenly from some stretches of a recording.
+
+    Parameters
+    ----------
+    rng : random.Random
+        The seeded random numbers.
+    room : list[tuple[float, float]]
+        The ``(earliest, latest)`` stretches, at least one.
+
+    Returns
+    -------
+    float
+        A position in one of the stretches, to the millisecond. Longer
+        stretches are likelier; if every stretch is a single moment, one of
+        them is picked.
+    """
+    total = sum(latest - earliest for earliest, latest in room)
+    if total <= 0.0:
+        return rng.choice(room)[0]
+    left = rng.uniform(0.0, total)
+    for earliest, latest in room:
+        if left <= latest - earliest:
+            return min(max(round(earliest + left, 3), earliest), latest)
+        left -= latest - earliest
+    return room[-1][1]
+
+
+def tally_startup(test_start: TestStart, report: CandidateReport) -> CandidateTally:
+    """Compare a candidate's trial run from one test start with the labels.
+
+    Parameters
+    ----------
+    test_start : TestStart
+        Where the trial run started and what the labels say is on air.
+    report : CandidateReport
+        The candidate's report for the trial run.
+
+    Returns
+    -------
+    CandidateTally
+        One test start, with its startup delay: from the start until the
+        candidate first reports the labeled state before the trial run ends.
+        If it never does, there is no delay to measure and it counts as over
+        the limit.
+    """
+    settled = next(
+        (
+            at
+            for at, state in _Timeline.of(report).changes
+            if state == test_start.state and at < test_start.end_seconds
+        ),
+        None,
+    )
+    delays = () if settled is None else (_delay(settled, test_start.seconds),)
+    return CandidateTally(test_starts=1, startup_delays=delays)
 
 
 @dataclass(frozen=True)
@@ -648,20 +857,22 @@ def _near_end(time: float, length: float) -> bool:
     return round(length - time, 6) < END_MARGIN_SECONDS
 
 
-def _within_limit(delays: Sequence[float]) -> int:
-    """Count the delays that are within the limit.
+def _within_limit(delays: Sequence[float], limit: float = DELAY_LIMIT_SECONDS) -> int:
+    """Count the delays that are within a limit.
 
     Parameters
     ----------
     delays : Sequence[float]
         The delays, in seconds, rounded to the microsecond.
+    limit : float
+        The limit, in seconds; entry and exit delays' by default.
 
     Returns
     -------
     int
-        How many are at most ``DELAY_LIMIT_SECONDS``.
+        How many are at most ``limit``.
     """
-    return sum(delay <= DELAY_LIMIT_SECONDS for delay in delays)
+    return sum(delay <= limit for delay in delays)
 
 
 def _share(count: int, total: int) -> float | None:
