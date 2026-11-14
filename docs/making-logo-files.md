@@ -6,7 +6,7 @@ In one line: the `make-logo` command samples a recording, shows you where the lo
 
 ## Why we make our own
 
-join_logo_scp tells program from commercials partly by whether the channel's logo is on screen. To spot the logo it needs a logo file: where the logo sits, its shape, and how see-through it is.
+join_logo_scp tells programs from commercial breaks partly by whether the channel's logo is on screen. To spot the logo it needs a logo file: where the logo sits, its shape, and how see-through it is.
 
 | Usual way to get one | Why it doesn't work for us |
 |---|---|
@@ -57,11 +57,14 @@ All commands run from the repository root. The examples make TV Asahi's logo fil
 | It stops when | Threshold | What to do |
 |---|---|---|
 | Too few frames show something in the box while the picture around the box is plain | Fewer than 30 frames | Check the box is around the logo. If it is, give more recordings of the channel in the same command |
+| Too few of those frames are left once the ones showing something else, such as a caption, are dropped | Fewer than 30 frames | Give more recordings of the channel in the same command, or check the box holds nothing but the logo |
 | Those frames don't agree on what is in the box | The typical frame strays from the others by more than 2 brightness levels (out of 255) | Something else is in the box, or the box isn't on the logo. Draw it again |
 | Those frames are all about as bright as each other | Their backgrounds span less than 40 brightness levels | Give more recordings, so there are both dark and bright scenes behind the logo |
 | Nothing in the box is opaque enough to be a logo | No pixel is 4% opaque or more | The box isn't on the logo. Draw it again |
 | The logo reaches the edge of the box | A logo pixel within 2 pixels of an edge | Make the box bigger on the side the message names |
 | The box isn't inside the sampled corner | The corner is the top right 512×256 pixels of the picture | Check the numbers were read off the rulers |
+| The box has no room around it | Fewer than 288 pixels of surroundings: the band around the box is 12 pixels wide, and stops at the sampled corner's edges and 4 pixels short of the picture's | Draw the box closer around the logo |
+| The recordings' pictures differ in size | Any difference in width or height | Give recordings made the same way |
 
 A logo that is in the picture but outside the top right corner can't be made with this command yet. None of the pilot channels needs that.
 
@@ -80,7 +83,7 @@ Made on 2026-11-14 from the six pilot recordings.
 - Each run took 80 to 90 seconds for one three-hour recording, and about two minutes for NTV's two recordings.
 - "Frames used" are the frames that showed the logo over plain surroundings, out of about 5,600 sampled per three-hour recording.
 - TV Asahi's logo rests on only 32 frames, just over the limit of 30: that afternoon's programs kept captions in the corner nearly all the time. Its logo came out clean, but the next TV Asahi recording is worth adding to the command to firm it up.
-- TV Asahi's logo is the slanted bar and the words "tv asahi" under it. The 意見広告 caption that shows in the same place belongs to commercials, not to the logo.
+- TV Asahi's logo is the slanted bar and the words "tv asahi" under it. The 意見広告 caption that shows in the same place is part of some commercials, not of the logo.
 
 <!-- PILOT-CHECK -->
 
@@ -99,9 +102,9 @@ The opacity and the logo's brightness are what the logo file holds, for every pi
 | Step | What happens |
 |---|---|
 | Sample | ffmpeg reads the top right 512×256 pixels of every keyframe: one frame every two seconds or so, a few thousand per recording |
-| Keep plain frames | A frame is kept if the 12-pixel band around the box fits an evenly lit surface to within 1.5 brightness levels, and that surface tilts by less than 12 levels from side to side. The outermost 4 pixels of the picture are ignored: a window capture leaves them dark |
-| Drop frames with nothing in the box | Frames without the logo, such as commercials, look plain inside the box too. A frame is kept only if at least 2% of the box differs from its background by more than 4 levels |
-| Fit, and drop frames that disagree | Each pixel's line is fitted. Frames that stray from the lines, such as a caption passing through the box, are dropped, and the lines fitted again until the same frames stay |
+| Keep plain frames | A frame is kept if the 12-pixel band around the box fits an evenly lit surface to within 1.5 brightness levels, and that surface tilts by less than 12 levels from side to side. The outermost 4 pixels of the picture are ignored: recording a window leaves them dark |
+| Drop frames with nothing in the box | Frames without the logo, such as those in a commercial break, look plain inside the box too. A frame is kept only if at least 2% of the box differs from its background by more than 4 levels |
+| Fit, and drop frames that disagree | Each pixel's line is fitted. Frames that stray from the lines by more than 2 brightness levels, and by more than 2.5 times what is typical, are dropped, and the lines fitted again until the same frames stay. A caption passing through the box is dropped this way. If the frames disagree but none stands out, the worst fifth are dropped instead |
 | Trim and save | Pixels less than 2% opaque are written as empty. The box is trimmed to the logo plus 6 pixels on every side and saved as a logo file |
 
 Only brightness is measured. A logo file also has room for the logo's colour, which join_logo_scp doesn't read, so `make-logo` leaves it empty. The files are therefore no good for erasing a logo from a recording, which this project doesn't do.
@@ -113,7 +116,7 @@ Logo files for Japanese channels are shared online. A collection with all five p
 | Channel | Public file (its date) | Where its logo would be in a 1920-wide picture | Where the logo is in our recordings | Most opaque pixel: public, ours |
 |---|---|---|---|---|
 | TBS | `TBS_2021-10-09` | x 1756–1852, y 38–81 | x 1771–1868, y 28–72 | 22%, 21% |
-| TV Asahi | `EX_2021-09-06` | x 1717–1819, y 56–110 | x 1731–1835, y 48–103 | 34%, 32% |
+| TV Asahi | `EX_2021-09-06` | x 1717–1819, y 56–110 | x 1731–1835, y 48–103 | 34%, 31% |
 | NTV | `NTV_2021-10-16` | x 1772–1867, y 35–99 | x 1786–1884, y 26–91 | 24%, 22% |
 | Fuji TV | `CX_2025-07-04` | x 1811–1871, y 27–92 | x 1827–1885, y 19–85 | 17%, 16% |
 | TV Tokyo | `TX_2023-11-14` | x 1757–1862, y 47–80 | x 1774–1878, y 40–72 | 11%, 10% |

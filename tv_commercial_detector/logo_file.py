@@ -36,8 +36,12 @@ _NUMBERS = struct.Struct("<8h")
 _START = len(_HEADER) + 4 + _NAME_BYTES + _NUMBERS.size
 _PIXEL_NUMBERS = 6
 _FULL_OPACITY = 1000
-_VIDEO_BLACK = 16
-_VIDEO_WHITE = 235
+VIDEO_BLACK = 16
+"""The 8-bit brightness level of black in video."""
+
+VIDEO_WHITE = 235
+"""The 8-bit brightness level of white in video."""
+
 _WHITE_VALUE = 4096
 
 
@@ -85,9 +89,9 @@ def write_logo_file(path: Path, logo: Logo) -> None:
     """
     pixels = np.zeros((logo.height, logo.width, _PIXEL_NUMBERS), dtype="<i2")
     pixels[..., 0] = np.rint(np.clip(logo.opacity, 0, 1) * _FULL_OPACITY)
-    scale = _WHITE_VALUE / (_VIDEO_WHITE - _VIDEO_BLACK)
+    scale = _WHITE_VALUE / (VIDEO_WHITE - VIDEO_BLACK)
     pixels[..., 1] = np.rint(
-        (np.clip(logo.brightness, _VIDEO_BLACK, _VIDEO_WHITE) - _VIDEO_BLACK) * scale
+        (np.clip(logo.brightness, VIDEO_BLACK, VIDEO_WHITE) - VIDEO_BLACK) * scale
     )
     name = logo.name.encode(_NAME_ENCODING, errors="replace")[: _NAME_BYTES - 1]
     path.write_bytes(
@@ -115,8 +119,8 @@ def read_logo_file(path: Path) -> Logo:
     Raises
     ------
     LogoFileError
-        If the file isn't a version 0.1 logo file, or ends before its logo
-        does.
+        If the file isn't a version 0.1 logo file, gives its logo a negative
+        size, or ends before its logo does.
     """
     content = path.read_bytes()
     if not content.startswith(_VERSION):
@@ -127,17 +131,21 @@ def read_logo_file(path: Path) -> Logo:
         raise LogoFileError(f"{path}: the file ends before its logo does")
     name = content[len(_HEADER) + 4 :].split(b"\0", 1)[0][: _NAME_BYTES - 1]
     x, y, height, width, *_ = _NUMBERS.unpack_from(content, _START - _NUMBERS.size)
-    count = max(height, 0) * max(width, 0) * _PIXEL_NUMBERS
+    if height < 0 or width < 0:
+        raise LogoFileError(
+            f"{path}: its logo's size isn't a size: {width} wide and {height} high"
+        )
+    count = height * width * _PIXEL_NUMBERS
     if len(content) < _START + count * 2:
         raise LogoFileError(f"{path}: the file ends before its logo does")
     pixels = np.frombuffer(content, dtype="<i2", count=count, offset=_START).reshape(
         height, width, _PIXEL_NUMBERS
     )
-    scale = (_VIDEO_WHITE - _VIDEO_BLACK) / _WHITE_VALUE
+    scale = (VIDEO_WHITE - VIDEO_BLACK) / _WHITE_VALUE
     return Logo(
         name=name.decode(_NAME_ENCODING, errors="replace"),
         x=x,
         y=y,
         opacity=pixels[..., 0] / _FULL_OPACITY,
-        brightness=pixels[..., 1] * scale + _VIDEO_BLACK,
+        brightness=pixels[..., 1] * scale + VIDEO_BLACK,
     )

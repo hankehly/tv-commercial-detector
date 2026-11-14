@@ -9,16 +9,18 @@ from loguru import logger
 from tv_commercial_detector.logo_maker import CornerFrames, LogoError
 
 CORNER_WIDTH = 512
+"""The width, in pixels, of the sampled corner: the top right of the picture,
+where Japanese channels show their logo."""
+
 CORNER_HEIGHT = 256
-"""The size of the sampled corner: the top right of the picture, where Japanese
-channels show their logo."""
+"""The height, in pixels, of the sampled corner."""
 
 
 def sample_corner(recordings: list[Path]) -> CornerFrames:
     """Sample the top right corner of the picture throughout some recordings.
 
     Only keyframes are read, which our recordings have every two seconds or
-    so. That takes about a minute for a three-hour recording, and gives
+    so. That takes about a minute and a half for a three-hour recording, and gives
     thousands of frames spread over everything it shows.
 
     Parameters
@@ -48,7 +50,7 @@ def sample_corner(recordings: list[Path]) -> CornerFrames:
 
     sampled = []
     for recording in recordings:
-        logger.info(f"Sampling {recording} (about a minute for three hours)")
+        logger.info(f"Sampling {recording} (about a minute and a half for three hours)")
         output = _run(
             [
                 "ffmpeg",

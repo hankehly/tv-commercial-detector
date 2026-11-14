@@ -6,7 +6,7 @@ from pathlib import Path
 
 import numpy as np
 
-from tv_commercial_detector.logo_file import Logo
+from tv_commercial_detector.logo_file import VIDEO_BLACK, VIDEO_WHITE, Logo
 
 RULER_STEP = 50
 """A ruler mark, and a dotted line across the picture, every this many pixels."""
@@ -27,7 +27,7 @@ _DIGITS = {
     "9": "111101111001111",
 }
 _PREVIEW_ZOOM = 4
-_PREVIEW_BACKGROUNDS = (16, 126, 235)
+_PREVIEW_BACKGROUNDS = (VIDEO_BLACK, (VIDEO_BLACK + VIDEO_WHITE) // 2, VIDEO_WHITE)
 """The preview shows a logo over black, mid grey and white, as 8-bit levels."""
 
 
@@ -83,17 +83,14 @@ def with_rulers(picture: np.ndarray, x: int, y: int) -> np.ndarray:
     height, width = picture.shape
     sheet = np.full((_TOP + height * _ZOOM, _LEFT + width * _ZOOM), _PAPER, np.uint8)
     body = sheet[_TOP:, _LEFT:]
-    body[:] = np.repeat(np.repeat(picture, _ZOOM, axis=0), _ZOOM, axis=1)
-    dots = np.arange(0, max(body.shape), 1) % 6 < 2
+    body[:] = _enlarge(picture, _ZOOM)
     for column in range(-x % RULER_STEP, width, RULER_STEP):
-        line = body[:, column * _ZOOM]
-        line[dots[: len(line)]] = np.maximum(line[dots[: len(line)]], _LINE)
+        _dot(body[:, column * _ZOOM])
         label = str(x + column)
-        _write(sheet, label, _LEFT + column * _ZOOM - 4 * len(label), 3)
+        _write_number(sheet, label, _LEFT + column * _ZOOM - 4 * len(label), 3)
     for row in range(-y % RULER_STEP, height, RULER_STEP):
-        line = body[row * _ZOOM, :]
-        line[dots[: len(line)]] = np.maximum(line[dots[: len(line)]], _LINE)
-        _write(sheet, str(y + row), 3, max(_TOP + row * _ZOOM - 5, _TOP))
+        _dot(body[row * _ZOOM, :])
+        _write_number(sheet, str(y + row), 3, max(_TOP + row * _ZOOM - 5, _TOP))
     return sheet
 
 
@@ -118,10 +115,10 @@ def logo_preview(logo: Logo) -> np.ndarray:
     gap = np.full((logo.height, 2), _LINE)
     strip = np.hstack([panels[0], gap, panels[1], gap, panels[2]])
     strip = np.clip(np.rint(strip), 0, 255).astype(np.uint8)
-    return np.repeat(np.repeat(strip, _PREVIEW_ZOOM, axis=0), _PREVIEW_ZOOM, axis=1)
+    return _enlarge(strip, _PREVIEW_ZOOM)
 
 
-def _write(sheet: np.ndarray, number: str, left: int, top: int) -> None:
+def _write_number(sheet: np.ndarray, number: str, left: int, top: int) -> None:
     """Write a number on a sheet in small digits, where it fits.
 
     Parameters
@@ -137,7 +134,37 @@ def _write(sheet: np.ndarray, number: str, left: int, top: int) -> None:
     """
     for place, digit in enumerate(number):
         dots = np.array(list(_DIGITS[digit]), dtype=np.uint8).reshape(5, 3)
-        glyph = np.repeat(np.repeat(dots, 2, axis=0), 2, axis=1) * _INK
+        glyph = _enlarge(dots, 2) * _INK
         column = max(left, 0) + place * 8
         patch = sheet[top : top + 10, column : column + 6]
         patch[:] = glyph[: patch.shape[0], : patch.shape[1]]
+
+
+def _dot(line: np.ndarray) -> None:
+    """Turn a row or column of a picture into a dotted line, in place.
+
+    Parameters
+    ----------
+    line : np.ndarray
+        The row or column. Two pixels in every six are lightened.
+    """
+    dots = np.arange(len(line)) % 6 < 2
+    line[dots] = np.maximum(line[dots], _LINE)
+
+
+def _enlarge(picture: np.ndarray, zoom: int) -> np.ndarray:
+    """Enlarge a picture by a whole number, each pixel becoming a square.
+
+    Parameters
+    ----------
+    picture : np.ndarray
+        The picture.
+    zoom : int
+        How many times larger to make it.
+
+    Returns
+    -------
+    np.ndarray
+        The enlarged picture.
+    """
+    return np.repeat(np.repeat(picture, zoom, axis=0), zoom, axis=1)

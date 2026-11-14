@@ -102,6 +102,13 @@ def test_a_name_too_long_for_the_file_is_cut_short(tmp_path: Path) -> None:
             + b"\0" * 60,
             "the file ends before its logo does",
         ),
+        (
+            b"<logo data file ver0.1>\0\0\0\0\0\0\0\0\x01"
+            + b"TBS".ljust(32, b"\0")
+            + b"\x00\x00\x00\x00\xfe\xff\xfd\xff"  # 2 and 3, both negative
+            + b"\0" * 8,
+            "its logo's size isn't a size: -3 wide and -2 high",
+        ),
     ],
 )
 def test_a_file_that_is_not_a_whole_logo_file_is_rejected(

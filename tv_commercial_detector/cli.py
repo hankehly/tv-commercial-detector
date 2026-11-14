@@ -141,13 +141,13 @@ def _make_logo(channel: str, recordings: list[str], box: Box | None) -> int:
     found = []
     for name in recordings:
         in_folder = data_folder / "recordings" / name
-        path = Path(name) if Path(name).is_file() else in_folder
-        if not path.is_file():
+        recording = Path(name) if Path(name).is_file() else in_folder
+        if not recording.is_file():
             logger.error(
                 f"no such recording: {name} (also looked in {in_folder.parent})"
             )
             return 1
-        found.append(path)
+        found.append(recording)
 
     path = logo_file(data_folder, channel)
     try:
@@ -187,7 +187,7 @@ def _make_logo(channel: str, recordings: list[str], box: Box | None) -> int:
     )
     logger.info(
         f"Their backgrounds run from level {measured.darkest:.0f} to "
-        f"{measured.brightest:.0f} (16 is black, 235 white)"
+        f"{measured.brightest:.0f} (video black is 16, white 235)"
     )
     logger.info(
         f"Its box is {Box(logo.x, logo.y, logo.width, logo.height)} "

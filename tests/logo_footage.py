@@ -100,7 +100,7 @@ class Footage:
                 under * (1 - self.logo) + self.logo_brightness * self.logo
             )
         if self.dark_picture_edges:
-            # What a window capture leaves along the top and right of the picture.
+            # What recording a window leaves along the top and right of the picture.
             frame[:2] *= 0.75
             frame[:, -1] = 7
         frame += self.random.normal(0, 0.7, size=frame.shape)

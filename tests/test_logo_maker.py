@@ -37,7 +37,7 @@ def test_frames_without_the_logo_or_with_clutter_do_not_spoil_the_logo() -> None
     footage = (
         Footage()
         .plain(120, logo=True)
-        .plain(300, logo=False)  # commercials over plain backgrounds
+        .plain(300, logo=False)  # commercial breaks over plain backgrounds
         .busy(200, logo=True)
         .busy(100, logo=False)
         .plain_with_a_caption(25)
@@ -55,7 +55,7 @@ def test_frames_without_the_logo_or_with_clutter_do_not_spoil_the_logo() -> None
     assert (measured.plain_frames, measured.frames_used) == (445, 120)
 
 
-def test_the_dark_edges_of_a_captured_picture_do_not_count_as_surroundings() -> None:
+def test_the_dark_edges_of_a_recorded_window_do_not_count_as_surroundings() -> None:
     footage = Footage(logo_at=(1866, 12), dark_picture_edges=True)
     footage.plain(200, logo=True)
 
@@ -148,6 +148,11 @@ def test_backgrounds_all_alike_are_an_error_asking_for_dark_and_bright() -> None
             Box(1790, 30, 0, 40),
             "the box 1790,30,0,40 is empty: give it as x,y,width,height",
         ),
+        (
+            Box(1800, 0, 50, 3),
+            "the box 1800,0,50,3 lies in the outermost 4 pixels of the picture, "
+            "which are left out because recording a window leaves them dark",
+        ),
     ],
 )
 def test_a_box_outside_the_sampled_corner_is_an_error(box: Box, message: str) -> None:
@@ -202,3 +207,16 @@ def test_a_faint_fringe_keeps_the_brightness_of_the_logo() -> None:
     fringe = logo.opacity[4, 6:46]
     assert ((fringe > 0) & (fringe < 0.04)).all()
     np.testing.assert_allclose(logo.brightness[4, 6:46], 230, atol=40)
+
+
+def test_too_few_frames_left_once_captions_are_dropped_is_an_error() -> None:
+    footage = Footage().plain(25, logo=True).plain_with_a_caption(10)
+
+    with pytest.raises(LogoError) as error:
+        measure_logo("TBS", footage.corner(), Box(1790, 30, 60, 40))
+
+    assert str(error.value) == (
+        "only 25 frames agree on what is in the box 1790,30,60,40 (another 10 "
+        "show something else there), and a logo needs at least 30. Add more "
+        "recordings of the channel, or check the box holds nothing but the logo."
+    )
