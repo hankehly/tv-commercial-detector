@@ -15,6 +15,10 @@ where Japanese channels show their logo."""
 CORNER_HEIGHT = 256
 """The height, in pixels, of the sampled corner."""
 
+_PICTURE = "v:0"
+# The video stream that is measured and sampled: a recording's first. Naming it
+# to both ffprobe and ffmpeg keeps the size and the frames from the same one.
+
 
 def sample_corner(recordings: list[Path]) -> CornerFrames:
     """Sample the top right corner of the picture throughout some recordings.
@@ -61,7 +65,8 @@ def sample_corner(recordings: list[Path]) -> CornerFrames:
                 "nokey",
                 "-i",
                 str(recording),
-                "-an",
+                "-map",
+                f"0:{_PICTURE}",
                 "-vf",
                 f"crop={width}:{height}:{x}:0,extractplanes=y",
                 "-fps_mode",
@@ -113,7 +118,7 @@ def _picture_size(recording: Path) -> tuple[int, int]:
             "-v",
             "error",
             "-select_streams",
-            "v:0",
+            _PICTURE,
             "-show_entries",
             "stream=width,height",
             "-of",

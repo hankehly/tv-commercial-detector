@@ -85,6 +85,17 @@ def test_a_name_too_long_for_the_file_is_cut_short(tmp_path: Path) -> None:
     assert read_logo_file(path).name == "A channel with a name longer th"
 
 
+def test_a_long_japanese_name_is_cut_between_characters(tmp_path: Path) -> None:
+    path = tmp_path / "long.lgd"
+    name = "テレビ東京系列の地上波放送局です"  # 16 characters of two bytes each
+
+    write_logo_file(path, Logo(name, 0, 0, np.zeros((1, 1)), np.zeros((1, 1))))
+
+    kept = "テレビ東京系列の地上波放送局で"
+    assert path.read_bytes()[32:64] == kept.encode("cp932") + b"\0" * 2
+    assert read_logo_file(path).name == kept
+
+
 @pytest.mark.parametrize(
     ("content", "message"),
     [

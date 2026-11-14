@@ -94,6 +94,8 @@ def write_logo_file(path: Path, logo: Logo) -> None:
         (np.clip(logo.brightness, VIDEO_BLACK, VIDEO_WHITE) - VIDEO_BLACK) * scale
     )
     name = logo.name.encode(_NAME_ENCODING, errors="replace")[: _NAME_BYTES - 1]
+    # The cut can fall inside a two-byte character: drop the half that is left.
+    name = name.decode(_NAME_ENCODING, errors="ignore").encode(_NAME_ENCODING)
     path.write_bytes(
         _HEADER
         + struct.pack(">I", 1)
