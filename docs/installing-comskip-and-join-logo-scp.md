@@ -69,14 +69,14 @@ Run each command from an empty folder, since both write their results there, giv
 | Run | You should see |
 |---|---|
 | `"$TV_COMMERCIAL_DETECTOR_COMSKIP_COMMAND" --output="$PWD" RECORDING` | A file named after the recording, ending `.txt`, whose first line starts `FILE PROCESSING COMPLETE`, and exit code 0 or 1 (see above) |
-| `"$TV_COMMERCIAL_DETECTOR_JOIN_LOGO_SCP_COMMAND" RECORDING LOGO` | Without a real logo file, the run stops at logoframe with `logoframe wrote no obs_logoframe.txt`. With one, it should end with `obs_cut.avs` and exit code 0; that hasn't been tried yet, as no logo file exists yet ([#22](https://github.com/hankehly/tv-commercial-detector/issues/22)) |
+| `"$TV_COMMERCIAL_DETECTOR_JOIN_LOGO_SCP_COMMAND" RECORDING LOGO` | Without a real logo file, the run stops at logoframe with `logoframe wrote no obs_logoframe.txt`. With one (see [Making a logo file](making-logo-files.md)), it ends with `obs_cut.avs` and exit code 0 |
 
 How long the tools took on the 89-minute pilot recording `2026-11-01_17-01-22.mp4`:
 
 | Tool | Time | Notes |
 |---|---|---|
 | Comskip | 11 minutes | 355 frames a second. It went through the recording three times: by default Comskip starts again from the beginning once it has found the channel's logo, and once more if that logo then disappears for over 12 minutes |
-| join_logo_scp, up to logoframe | 1.5 minutes | Reading the recording and finding its silences. logoframe's pass over every frame, which needs a real logo file, isn't timed yet |
+| join_logo_scp | 6 minutes | With NTV's logo file, on 2026-11-14. Reading the recording and finding its silences took 1.5 minutes when timed by itself; most of the rest is logoframe's pass over every frame |
 
 ## What didn't work as the guides say
 

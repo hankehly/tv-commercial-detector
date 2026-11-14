@@ -85,7 +85,33 @@ Made on 2026-11-14 from the six pilot recordings.
 - TV Asahi's logo rests on only 32 frames, just over the limit of 30: that afternoon's programs kept captions in the corner nearly all the time. Its logo came out clean, but the next TV Asahi recording is worth adding to the command to firm it up.
 - TV Asahi's logo is the slanted bar and the words "tv asahi" under it. The 意見広告 caption that shows in the same place is part of some commercials, not of the logo.
 
-<!-- PILOT-CHECK -->
+### Checked with join_logo_scp
+
+logoframe, the part of join_logo_scp that looks for the logo, was run over each whole recording with its channel's logo file. There are no label files yet, so the check is indirect: commercials come in 15-second units, so where the logo goes away for a commercial break, it should stay away for a multiple of 15 seconds.
+
+| Channel | Recording | Logo found on screen for | Times the logo went away | Of those, within 1 s of a multiple of 15 s |
+|---|---|---|---|---|
+| TBS | `2026-11-01_10-56-55.mp4` (181 min) | 137 min | 16 | 9 |
+| TV Asahi | `2026-11-01_13-59-38.mp4` (181 min) | 145 min | 15 | 13 |
+| NTV | `2026-11-01_17-01-22.mp4` (89 min) | 67 min | 9 | 7 |
+| NTV | `2026-11-02_04-01-26.mp4` (179 min) | 158 min | 12 | 9 |
+| Fuji TV | `2026-11-01_21-48-37.mp4` (192 min) | 147 min | 29 | 19 |
+| TV Tokyo | `2026-11-02_01-00-51.mp4` (180 min) | 0 min | — | — |
+
+- **Four channels work.** Most gaps are commercial-break sized: 30, 60, 90, 120, 150, 165, 180 seconds. On each of these recordings, 10 random moments logoframe called "logo on" and 10 it called "off" were also looked at. Every "on" moment showed the logo, or a program's caption covering it. The "off" moments showed no logo, except two on the first NTV recording, where a caption sat over the logo on a bright scene.
+- **The gaps that aren't commercial-break sized** are mostly programs covering or dropping the logo: TBS's Sunday shows fill the corner with their own captions for minutes at a time. That is how join_logo_scp sees these programs, not a fault in the logo file.
+- **TV Tokyo doesn't work.** logoframe finds no logo at all in the TV Tokyo recording. The logo is there and the logo file matches it, but it is only 10% opaque, and its outline is soft in our recordings, which hold a scaled and compressed copy of the broadcast. logoframe looks for places where the logo makes pixels two apart differ by at least 16 brightness levels, and wants at least 100 of them on odd rows and 100 on even rows. Fuji TV's logo, the next faintest, has 321 such places; TV Tokyo's has 10, and its biggest step is 18 levels. So for now join_logo_scp runs on TV Tokyo without knowing when the logo is on: it warns `no logo information found`, decides its cuts from silences and scene changes alone, and still ends with exit code 0 (tried on a 15-minute stretch). See the next section.
+- **The whole pipeline runs.** `tools/jlse-docker` ran join_logo_scp's three programs on the 89-minute NTV recording with NTV's logo file and ended with exit code 0 and a cut list, in 6 minutes.
+
+### If a logo is too faint for join_logo_scp
+
+Nothing was changed for TV Tokyo, because the benchmark runs each tool with its default settings ([#7](https://github.com/hankehly/tv-commercial-detector/issues/7)). What could be tried, if a decision is made to:
+
+| Option | What it changes |
+|---|---|
+| Record a sharper picture. Untested ideas: a Xit Mobile window exactly 960 points wide, so OBS doesn't scale the picture a second time on its way to 1920×1080, or a higher bitrate | The recordings, for every detector. The logo's outline might come out crisp enough |
+| Give logoframe its own settings for this logo | join_logo_scp's detection settings, which #7 keeps at their defaults |
+| Leave it | join_logo_scp is scored on TV Tokyo as it behaves without logo information |
 
 ## How it works
 
@@ -124,7 +150,7 @@ Logo files for Japanese channels are shared online. A collection with all five p
 - **Position:** on every channel the logo sits about 15 pixels further right and 8 pixels higher in our recordings. That is what a picture zoomed in by about 2% around its centre looks like: the Xit Mobile app doesn't show the outer 1% or so of the broadcast on each side.
 - **Shape and opacity:** once a public logo is stretched to 1920 wide, zoomed and shifted to fit, it matches ours closely: a correlation of 0.96 to 0.99 on every channel, with ours 2 to 12% less opaque. Two measurements made in different ways agreeing this well is the main evidence that `make-logo` measures the right thing.
 - **Brightness:** the public files give the logos a brightness of 229 to 234, close to video white (235). In our recordings they measure 208 to 218. Our recordings squeeze the broadcast's brightness: their black sits near level 30, not 16, as if each level v had become 16 + v × 219 ÷ 255. That would turn 232 into 215, which fits.
-- **Why not convert the public files instead?** <!-- PUBLIC-VERDICT -->
+- **Why not convert the public files instead?** Copies of the public files, converted to fit (stretched, zoomed, shifted and dimmed), were tried on three recordings, and logoframe did worse with them than with ours. On TBS it found the logo for 77 minutes against 137 with ours, and on the 89-minute NTV recording for 54 minutes against 67, with fewer gaps of commercial-break size (6 of 15 against 9 of 16, and 1 of 8 against 7 of 9). On TV Tokyo it found nothing with either. The public files are crisper than the logo really is in our recordings; ours carry the softness that is really there.
 
 The public files aren't in the repository or the data folder. The page states no terms of use.
 
