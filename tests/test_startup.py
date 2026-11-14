@@ -264,6 +264,8 @@ def test_startup_delay_passes_when_95_percent_are_within_10_s_counting_10_s_as_w
         "exit_delay_within_limit": "pass",
         "missed_commercial_breaks": "pass",
         "startup_delay_within_limit": verdict,
+        "false_flips_per_hour": "pass",
+        "processing_speed": "pass",
     }
     assert scored["verdict"] == verdict
 
