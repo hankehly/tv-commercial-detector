@@ -218,6 +218,30 @@ def _read_recording(value: object, problems: list[str]) -> str | None:
     return value
 
 
+def channel_problem(channel: str) -> str | None:
+    """Say why a channel can't be used as written, if it can't.
+
+    A channel names its logo file, so it must work as a file name.
+
+    Parameters
+    ----------
+    channel : str
+        The channel, as written in a label file or given to ``make-logo``.
+
+    Returns
+    -------
+    str | None
+        The problem, or ``None`` if there is none.
+    """
+    if not channel.strip():
+        return "channel must be the channel's name, in quotes"
+    if channel != channel.strip():
+        return "channel can't start or end with a space"
+    if "/" in channel or "\\" in channel:
+        return "channel can't contain / or \\, since it names the channel's logo file"
+    return None
+
+
 def _read_channel(value: object, problems: list[str]) -> str | None:
     """Read the ``channel`` field, which also names the channel's logo file.
 
@@ -234,16 +258,12 @@ def _read_channel(value: object, problems: list[str]) -> str | None:
     str | None
         The channel, or ``None`` if it can't be read.
     """
-    if not isinstance(value, str) or not value.strip():
+    if not isinstance(value, str):
         problems.append("channel must be the channel's name, in quotes")
         return None
-    if value != value.strip():
-        problems.append("channel can't start or end with a space")
-        return None
-    if "/" in value or "\\" in value:
-        problems.append(
-            "channel can't contain / or \\, since it names the channel's logo file"
-        )
+    problem = channel_problem(value)
+    if problem:
+        problems.append(problem)
         return None
     return value
 
