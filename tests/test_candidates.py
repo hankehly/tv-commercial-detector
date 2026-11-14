@@ -10,19 +10,12 @@ import re
 
 import pytest
 from fake_detectors import FakeCandidate, FakeDetector
-from recording_sets import RecordingSet
+from recording_sets import RecordingSet, clock
 
 from tv_commercial_detector import cli, settings
 from tv_commercial_detector.cli import main
 from tv_commercial_detector.detectors import State
 from tv_commercial_detector.settings import DATA_FOLDER_VARIABLE
-
-
-def clock(seconds: float) -> str:
-    """Write a whole number of seconds as a label time, hh:mm:ss."""
-    minutes, secs = divmod(int(seconds), 60)
-    return f"{minutes // 60:02d}:{minutes % 60:02d}:{secs:02d}"
-
 
 CB = State.COMMERCIAL_BREAK
 PROGRAM = State.PROGRAM
@@ -33,24 +26,29 @@ def test_worked_example_entry_3_s_and_exit_4_s_are_both_within_the_bar(
     recording_set: RecordingSet,
 ) -> None:
     # The example from #7: labels 60 to 180 s, the candidate reports a
-    # commercial break at 63 s and the program at 184 s.
+    # commercial break at 63 s and the program at 184 s. On its two trial
+    # runs, one from the middle of the commercial break and one inside the
+    # program, it works out what is on air at once.
     recording_set.add("a.mp4", 3600.0, [("00:01:00", "00:03:00")])
     candidate = FakeCandidate(
-        "fake", {"a.mp4": [(PROGRAM, 1.0), (CB, 63.0), (PROGRAM, 184.0)]}
+        "fake", {"a.mp4": [(PROGRAM, 0.0), (CB, 63.0), (PROGRAM, 184.0)]}
     )
 
     scorecard = recording_set.run(candidate)
 
     [scored] = scorecard["detectors"]
     assert scored["kind"] == "candidate"
-    assert candidate.runs == [("a.mp4", 0.0, 3600.0)]
+    assert candidate.runs[0] == ("a.mp4", 0.0, 3600.0)
     one = {"commercial_breaks": 1}
+    two_starts = {"test_starts": 2}
     assert scored["overall"] == {
         "entry_delay_within_limit": {"value": 1.0, "based_on": one},
         "entry_delay_median": {"value": 3.0, "based_on": one},
         "exit_delay_within_limit": {"value": 1.0, "based_on": one},
         "exit_delay_median": {"value": 4.0, "based_on": one},
         "missed_commercial_breaks": {"value": 0, "based_on": one},
+        "startup_delay_within_limit": {"value": 1.0, "based_on": two_starts},
+        "startup_delay_median": {"value": 0.0, "based_on": two_starts},
         "false_flips_per_hour": {"value": 0.0, "based_on": {"hours": 1.0}},
         "processing_speed": {"value": 0.0, "based_on": {"hours": 1.0}},
     }
@@ -59,6 +57,7 @@ def test_worked_example_entry_3_s_and_exit_4_s_are_both_within_the_bar(
         "entry_delay_within_limit": "pass",
         "exit_delay_within_limit": "pass",
         "missed_commercial_breaks": "pass",
+        "startup_delay_within_limit": "pass",
         "false_flips_per_hour": "pass",
         "processing_speed": "pass",
     }
@@ -320,6 +319,7 @@ def test_entry_delay_passes_when_95_percent_are_within_5_s_counting_5_s_as_withi
         "entry_delay_within_limit": verdict,
         "exit_delay_within_limit": "pass",
         "missed_commercial_breaks": "pass",
+        "startup_delay_within_limit": "pass",
         "false_flips_per_hour": "pass",
         "processing_speed": "pass",
     }
@@ -333,7 +333,8 @@ def test_missed_commercial_breaks_pass_up_to_2_percent(
     # 50 labeled commercial breaks, each 30 s long and 70 s apart, entered and
     # left on time except the first ``missed``, never reported. 1 of 50 is 2%
     # and passes; 2 of 50 is 4% and fails. Missed ones count as entered over
-    # 5 s, but 48 of 50 within is still 96%.
+    # 5 s, but 48 of 50 within is still 96%. Their test starts never settle,
+    # but 98 of 100 within is still 98%.
     starts = [10.0 + 70.0 * i for i in range(50)]
     recording_set.add(
         "a.mp4", 3600.0, [(clock(start), clock(start + 30.0)) for start in starts]
@@ -354,6 +355,7 @@ def test_missed_commercial_breaks_pass_up_to_2_percent(
         "entry_delay_within_limit": "pass",
         "exit_delay_within_limit": "pass",
         "missed_commercial_breaks": verdict,
+        "startup_delay_within_limit": "pass",
         "false_flips_per_hour": "pass",
         "processing_speed": "pass",
     }
@@ -489,11 +491,17 @@ def test_run_command_prints_candidates_with_pass_or_fail_and_look_ahead_without(
 ) -> None:
     # a: entered 3 s late and left 4 s late. b: missed. Overall, 1 of 2
     # entered within 5 s fails, the exit passes, and 1 of 2 missed fails.
+    # Each has a test start mid-commercial break and one inside a program,
+    # and the candidate settles at once on what its script says. That is
+    # wrong for b's commercial break, so 3 of 4 within 10 s fails.
     recording_set.add("a.mp4", 3600.0, [("00:01:00", "00:03:00")])
     recording_set.add("b.mp4", 3600.0, [("00:01:00", "00:03:00")])
     candidate = FakeCandidate(
         "fake",
-        {"a.mp4": [(CB, 63.0), (PROGRAM, 184.0)], "b.mp4": [(PROGRAM, 1.0)]},
+        {
+            "a.mp4": [(PROGRAM, 0.0), (CB, 63.0), (PROGRAM, 184.0)],
+            "b.mp4": [(PROGRAM, 0.0)],
+        },
     )
     look_ahead = FakeDetector("tool", {"a.mp4": [(60.0, 180.0)], "b.mp4": []})
     monkeypatch.setenv(DATA_FOLDER_VARIABLE, str(recording_set.data_folder))
@@ -529,6 +537,13 @@ def test_run_command_prints_candidates_with_pass_or_fail_and_look_ahead_without(
         "Exit delay within 5 s": ["100.0% of 1", "pass", "100.0% of 1", "- of 0"],
         "Exit delay, median": ["4.0 s (1)", "-", "4.0 s (1)", "- (0)"],
         "Missed commercial breaks": ["1 of 2", "fail", "0 of 1", "1 of 1"],
+        "Startup delay within 10 s": [
+            "75.0% of 4",
+            "fail",
+            "100.0% of 2",
+            "50.0% of 2",
+        ],
+        "Startup delay, median": ["0.0 s (3)", "-", "0.0 s (2)", "0.0 s (1)"],
         "False flips per hour": [
             "0.00 in 2.0 h",
             "pass",
@@ -608,7 +623,10 @@ def test_recording_without_commercial_breaks_is_scored(
     recording_set.add("b.mp4", 3600.0, [])
     candidate = FakeCandidate(
         "fake",
-        {"a.mp4": [(CB, 60.0), (PROGRAM, 180.0)], "b.mp4": [(PROGRAM, 1.0)]},
+        {
+            "a.mp4": [(PROGRAM, 0.0), (CB, 60.0), (PROGRAM, 180.0)],
+            "b.mp4": [(PROGRAM, 0.0)],
+        },
     )
 
     scorecard = recording_set.run(candidate)
@@ -634,6 +652,7 @@ def test_measure_with_nothing_to_count_fails(recording_set: RecordingSet) -> Non
         "entry_delay_within_limit": "fail",
         "exit_delay_within_limit": "fail",
         "missed_commercial_breaks": "fail",
+        "startup_delay_within_limit": "fail",
         "false_flips_per_hour": "fail",
         "processing_speed": "fail",
     }

@@ -8,6 +8,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import cast
 
+from loguru import logger
+
 from tv_commercial_detector.detectors import (
     Candidate,
     CandidateReport,
@@ -30,11 +32,15 @@ from tv_commercial_detector.scorecard import (
     ScoredRecording,
 )
 from tv_commercial_detector.scorer import (
+    TEST_START_MARGIN_SECONDS,
     CandidateTally,
     LookAheadTally,
     Measure,
+    TestStart,
     tally_candidate,
     tally_look_ahead,
+    tally_startup,
+    test_starts,
 )
 
 SCORECARD_FILE_NAME = "scorecard.json"
@@ -91,10 +97,16 @@ def run(
     validation = validate(data_folder, recording_list, labels_folder, probe)
     if validation.errors:
         return RunResult(validation, None, None)
+    recordings = validation.labeled
+    starts = (
+        _choose_test_starts(recordings)
+        if any(detector.kind == DetectorKind.CANDIDATE for detector in detectors)
+        else {}
+    )
     scorecard = Scorecard(
         started_at=started_at,
-        recordings=[_scored_recording(r) for r in validation.labeled],
-        detectors=[_score(detector, validation.labeled) for detector in detectors],
+        recordings=[_scored_recording(r) for r in recordings],
+        detectors=[_score(detector, recordings, starts) for detector in detectors],
     )
     path = _new_run_folder(data_folder / "runs", started_at) / SCORECARD_FILE_NAME
     path.write_text(json.dumps(scorecard.to_json(), indent=2) + "\n")
@@ -131,14 +143,46 @@ def _new_run_folder(runs_folder: Path, started_at: datetime) -> Path:
         return folder
 
 
+def _choose_test_starts(
+    recordings: list[LabeledRecording],
+) -> dict[str, tuple[TestStart, ...]]:
+    """Choose every recording's test starts, warning about any without room.
+
+    Parameters
+    ----------
+    recordings : list[LabeledRecording]
+        The labeled recordings.
+
+    Returns
+    -------
+    dict[str, tuple[TestStart, ...]]
+        Each recording's test starts, by file name. A recording too short or
+        too busy for a test start inside a program is logged as a warning.
+    """
+    starts = {}
+    for recording in recordings:
+        name = recording.path.name
+        starts[name] = test_starts(recording)
+        if all(start.state != State.PROGRAM for start in starts[name]):
+            logger.warning(
+                f"{name} has no program at least {TEST_START_MARGIN_SECONDS:g} s "
+                "from every labeled edge and from its end, so it has no test "
+                "start inside a program"
+            )
+    return starts
+
+
 def _score(
-    detector: LookAheadDetector | Candidate, recordings: list[LabeledRecording]
+    detector: LookAheadDetector | Candidate,
+    recordings: list[LabeledRecording],
+    starts: dict[str, tuple[TestStart, ...]],
 ) -> DetectorScorecard:
     """Score a detector of either kind on every labeled recording.
 
     A look-ahead detector analyzes each recording; a candidate gets one full
-    run over each. A recording the detector fails on, or reports nonsense for,
-    is recorded as an error and left out of the detector's measures.
+    run over each, plus a trial run from each of its test starts. A recording
+    the detector fails on, or reports nonsense for, is recorded as an error
+    and left out of the detector's measures.
 
     Parameters
     ----------
@@ -146,6 +190,9 @@ def _score(
         The detector.
     recordings : list[LabeledRecording]
         The labeled recordings.
+    starts : dict[str, tuple[TestStart, ...]]
+        Each recording's test starts, by file name, for a candidate's trial
+        runs.
 
     Returns
     -------
@@ -156,7 +203,9 @@ def _score(
     if detector.kind == DetectorKind.CANDIDATE:
         candidate = cast(Candidate, detector)
         overall, per_recording, errors = _tally_each(
-            recordings, lambda r: _tally_full_run(candidate, r), CandidateTally()
+            recordings,
+            lambda r: _tally_runs(candidate, r, starts[r.path.name]),
+            CandidateTally(),
         )
         verdicts = overall.verdicts()
     else:
@@ -212,10 +261,12 @@ def _tally_each[T: (CandidateTally, LookAheadTally)](
     return overall, per_recording, errors
 
 
-def _tally_full_run(
-    candidate: Candidate, recording: LabeledRecording
+def _tally_runs(
+    candidate: Candidate,
+    recording: LabeledRecording,
+    starts: tuple[TestStart, ...],
 ) -> CandidateTally:
-    """Give a candidate a full run over a recording and tally its report.
+    """Give a candidate a full run and its trial runs on a recording, and tally them.
 
     Parameters
     ----------
@@ -223,6 +274,8 @@ def _tally_full_run(
         The candidate.
     recording : LabeledRecording
         The labeled recording.
+    starts : tuple[TestStart, ...]
+        The recording's test starts.
 
     Returns
     -------
@@ -232,12 +285,49 @@ def _tally_full_run(
     Raises
     ------
     DetectorError
-        If the candidate fails on the recording or reports nonsense.
+        If the candidate fails on the recording or reports nonsense, in its
+        full run or in any trial run.
     """
-    length = recording.entry.length_seconds
-    report = candidate.run(_for_detector(recording), 0.0, length)
+    described = _for_detector(recording)
+    report = candidate.run(described, 0.0, recording.entry.length_seconds)
     _check_candidate_report(report, start_seconds=0.0)
-    return tally_candidate(recording, report)
+    tally = tally_candidate(recording, report)
+    for test_start in starts:
+        tally += _tally_trial_run(candidate, described, test_start)
+    return tally
+
+
+def _tally_trial_run(
+    candidate: Candidate, recording: Recording, test_start: TestStart
+) -> CandidateTally:
+    """Give a candidate a trial run from a test start and tally its report.
+
+    Parameters
+    ----------
+    candidate : Candidate
+        The candidate.
+    recording : Recording
+        The recording, as the candidate is told about it.
+    test_start : TestStart
+        Where the trial run starts and what is on air there.
+
+    Returns
+    -------
+    CandidateTally
+        The test start and its startup delay.
+
+    Raises
+    ------
+    DetectorError
+        If the candidate fails on the trial run or reports nonsense; the
+        message says which trial run.
+    """
+    try:
+        report = candidate.run(recording, test_start.seconds, test_start.end_seconds)
+        _check_candidate_report(report, start_seconds=test_start.seconds)
+    except DetectorError as e:
+        raise DetectorError(f"trial run from {test_start.seconds} s: {e}") from e
+    return tally_startup(test_start, report)
 
 
 def _tally_analysis(

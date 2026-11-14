@@ -22,12 +22,15 @@ Saved as JSON, one file per run::
           "kind": "candidate",
           "overall": {"entry_delay_within_limit":
                         {"value": 0.95, "based_on": {"commercial_breaks": 20}},
+                      "startup_delay_within_limit":
+                        {"value": 1.0, "based_on": {"test_starts": 24}},
                       ...},
           "per_recording": {"a.mp4": {...}},
           "errors": {},
           "verdicts": {"entry_delay_within_limit": "pass",
                        "exit_delay_within_limit": "pass",
                        "missed_commercial_breaks": "fail",
+                       "startup_delay_within_limit": "pass",
                        "false_flips_per_hour": "pass",
                        "processing_speed": "pass"},
           "verdict": "fail"
@@ -49,7 +52,11 @@ from dataclasses import dataclass, field
 from datetime import datetime
 
 from tv_commercial_detector.detectors import DetectorKind
-from tv_commercial_detector.scorer import DELAY_LIMIT_SECONDS, Measure
+from tv_commercial_detector.scorer import (
+    DELAY_LIMIT_SECONDS,
+    STARTUP_LIMIT_SECONDS,
+    Measure,
+)
 
 
 @dataclass(frozen=True)
@@ -209,6 +216,8 @@ CANDIDATE_MEASURE_LABELS = {
     "exit_delay_within_limit": f"Exit delay within {DELAY_LIMIT_SECONDS:g} s",
     "exit_delay_median": "Exit delay, median",
     "missed_commercial_breaks": "Missed commercial breaks",
+    "startup_delay_within_limit": f"Startup delay within {STARTUP_LIMIT_SECONDS:g} s",
+    "startup_delay_median": "Startup delay, median",
     "false_flips_per_hour": "False flips per hour",
     "processing_speed": "Processing speed",
 }
@@ -221,7 +230,11 @@ MEASURE_LABELS = {
 
 _SIGNED = {"start_offset_median", "end_offset_median"}
 
-_SHARES = {"entry_delay_within_limit", "exit_delay_within_limit"}
+_SHARES = {
+    "entry_delay_within_limit",
+    "exit_delay_within_limit",
+    "startup_delay_within_limit",
+}
 
 
 def format_tables(scorecard: Scorecard) -> list[str]:
@@ -292,15 +305,32 @@ def _cell(name: str, measure: Measure) -> str:
         return f"{measure.value} of {measure.based_on['commercial_breaks']}"
     if name in _SHARES:
         value = "-" if measure.value is None else f"{measure.value:.1%}"
-        return f"{value} of {measure.based_on['commercial_breaks']}"
+        return f"{value} of {_count(measure)}"
     if name == "false_flips_per_hour":
         value = "-" if measure.value is None else f"{measure.value:.2f}"
         return f"{value} in {measure.based_on['hours']:.1f} h"
     if name == "processing_speed":
         value = "-" if measure.value is None else f"{measure.value:.3f}"
         return f"{value} s/s in {measure.based_on['hours']:.1f} h"
-    count = measure.based_on["commercial_breaks"]
+    count = _count(measure)
     if measure.value is None:
         return f"- ({count})"
     value = f"{measure.value:+.1f}" if name in _SIGNED else f"{measure.value:.1f}"
     return f"{value} s ({count})"
+
+
+def _count(measure: Measure) -> int:
+    """Return the count a delay measure is based on.
+
+    Parameters
+    ----------
+    measure : Measure
+        The measure, based on commercial breaks or on test starts.
+
+    Returns
+    -------
+    int
+        How many it is counted over.
+    """
+    [count] = measure.based_on.values()
+    return int(count)
