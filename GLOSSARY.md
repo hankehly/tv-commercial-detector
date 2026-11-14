@@ -74,7 +74,7 @@ The file in the repository holding one recording's labels and its channel. It be
 _Avoid_: annotation file
 
 **Logo file**:
-An image of one channel's on-screen logo, made by hand from our own recordings, that join_logo_scp uses to tell when the logo is on screen.
+An image of one channel's on-screen logo, measured from our own recordings with a box drawn by hand around the logo, that join_logo_scp uses to tell when the logo is on screen.
 _Avoid_: logo data
 
 **Candidate**:

@@ -126,5 +126,6 @@ def test_validate_summarises_labels_and_lists_channels_without_a_logo_file(
     ) in log
     assert (
         "WARNING No logo file for join_logo_scp on these channels: NTV. "
-        f"Save each as {data / 'logos' / '<channel>.lgd'}."
+        "Make each with the make-logo command, which saves it as "
+        f"{data / 'logos' / '<channel>.lgd'}."
     ) in log

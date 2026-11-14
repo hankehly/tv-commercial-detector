@@ -48,7 +48,7 @@ A recording without a usable label file is skipped with a warning, so `validate`
 
 ## Logo files
 
-join_logo_scp needs one logo file per channel, made by hand from our own recordings. Put each in the data folder's `logos/` folder, named after the channel exactly as the label files write it, with the `.lgd` extension:
+join_logo_scp needs one logo file per channel, made by hand from our own recordings with the `make-logo` command: see [Making a logo file](making-logo-files.md). The command saves each in the data folder's `logos/` folder, named after the channel exactly as the label files write it, with the `.lgd` extension:
 
 ```
 data/
